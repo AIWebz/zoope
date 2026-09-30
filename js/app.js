@@ -184,7 +184,7 @@
     var info = [];
     if (state.face) {
       stopPreview = ZoopeAvatar.animate($('avatarCanvas'), state.face, function () { return previewLevel; });
-      info.push('Face scanned (' + Math.round(state.face.confidence * 100) + '% match)');
+      info.push(state.face.kind === 'mesh' ? 'Photo-real face (478-point mesh)' : 'Cartoon face');
     } else {
       ZoopeAvatar.draw($('avatarCanvas'), null);
     }
@@ -208,6 +208,8 @@
       $('camPlaceholder').classList.add('hidden');
       $('scanFace').disabled = false;
       $('recordVoice').disabled = false;
+      $('startAlphabet').disabled = false;
+      $('alphaStatus').textContent = 'Ready. Press “Start alphabet”.';
       $('startCam').textContent = 'Camera & mic on';
       $('startCam').disabled = true;
       $('scanStatus').textContent = 'Put your face inside the oval, in good light.';
@@ -219,26 +221,41 @@
   $('scanFace').addEventListener('click', function () {
     var line = $('scanLine');
     line.classList.add('on');
-    $('scanStatus').textContent = 'Scanning your face… hold still.';
     $('scanFace').disabled = true;
-    var samples = [], n = 0;
-    var iv = setInterval(function () {
-      samples.push(ZoopeAvatar.scanFace(cam));
-      if (++n >= 6) {
-        clearInterval(iv);
+    $('scanStatus').textContent = 'Loading the face model (first time only)…';
+    ZoopeFaceMesh.load().then(function () {
+      $('scanStatus').textContent = 'Scanning your face… hold still and look at the camera.';
+      return new Promise(function (res) { setTimeout(res, 400); });
+    }).then(function () {
+      // take a few scans and keep the one where the face fills the frame best
+      var tries = [0, 1, 2].map(function (i) {
+        return new Promise(function (res) { setTimeout(res, i * 300); }).then(function () { return ZoopeFaceMesh.scan(cam); });
+      });
+      return Promise.all(tries);
+    }).then(function (faces) {
+      var best = faces.filter(Boolean).sort(function (a, b) { return b.confidence - a.confidence; })[0];
+      if (!best) throw new Error('noface');
+      finishScan(best, 'Face cloned from 478 points! Now clone your voice below.');
+    }).catch(function (err) {
+      if (err && err.message === 'noface') {
         line.classList.remove('on');
         $('scanFace').disabled = false;
-        var best = samples.sort(function (a, b) { return b.confidence - a.confidence; })[0];
-        if (best.confidence < 0.25) {
-          $('scanStatus').textContent = 'I couldn\'t find a clear face. Move closer to the oval and add more light, then try again.';
-          return;
-        }
-        state.face = best;
-        save();
-        refreshAvatarBox();
-        $('scanStatus').textContent = 'Face scanned! Now record your voice.';
+        $('scanStatus').textContent = 'I couldn\'t find your face. Look straight at the camera, inside the oval, in good light, then try again.';
+        return;
       }
-    }, 250);
+      // face model unavailable: fall back to the cartoon avatar
+      var fallback = ZoopeAvatar.scanFace(cam);
+      finishScan(fallback, 'The face model couldn\'t load here, so I made a cartoon avatar instead.');
+    });
+
+    function finishScan(face, msg) {
+      line.classList.remove('on');
+      $('scanFace').disabled = false;
+      state.face = face;
+      save();
+      refreshAvatarBox();
+      $('scanStatus').textContent = msg;
+    }
   });
 
   $('recordVoice').addEventListener('click', function () {
@@ -259,8 +276,104 @@
 
   $('testVoice').addEventListener('click', function () {
     var n = state.profile.preferred || 'your zoope';
-    ZoopeVoice.speak('Hi everyone, ' + n + ' here. Happy to share a quick update.', state.voice, function (l) { previewLevel = l; });
+    speakAs('Hi everyone, ' + n + ' here. Happy to share a quick update.', function (l) { previewLevel = l; });
   });
+
+  /* ------------------------ alphabet voice clone ------------------------ */
+  var LETTERS = ZoopeVoiceClone.LETTERS;
+  var clips = loadClips(), cloneVoice = null, alphaRun = null;
+
+  function loadClips() {
+    var out = {};
+    try {
+      var raw = JSON.parse(localStorage.getItem('zoope-voiceclone') || '{}');
+      for (var L in raw) out[L] = ZoopeVoiceClone.decode(raw[L]);
+    } catch (e) { /* storage unavailable or corrupt */ }
+    return out;
+  }
+  function saveClips() {
+    var raw = {};
+    for (var L in clips) raw[L] = ZoopeVoiceClone.encode(clips[L]);
+    try { localStorage.setItem('zoope-voiceclone', JSON.stringify(raw)); return true; } catch (e) { return false; }
+  }
+  function hasClone() { return Object.keys(clips).length >= 20; }
+  function rebuildClone() { cloneVoice = hasClone() ? new ZoopeVoiceClone.Voice(clips) : null; }
+
+  function renderAlphabet(current) {
+    $('alphaGrid').innerHTML = LETTERS.map(function (L) {
+      return '<button data-letter="' + L + '" class="' + (clips[L] ? 'done' : '') + (L === current ? ' current' : '') + '">' + L + '</button>';
+    }).join('');
+    var n = Object.keys(clips).length;
+    $('testClone').disabled = !hasClone();
+    if (!alphaRun) {
+      $('alphaStatus').textContent = n === 26 ? 'All 26 letters recorded. Your cloned voice is ready.'
+        : n ? n + ' of 26 letters recorded' + (hasClone() ? '. Enough to speak, but more letters sound better.' : '. Record at least 20 to use your cloned voice.')
+        : (stream ? 'Ready. Press “Start alphabet”.' : 'Turn on the camera & mic above to start.');
+    }
+  }
+
+  function runAlphabet(list) {
+    if (!stream || alphaRun) return;
+    var run = alphaRun = { stop: false };
+    $('startAlphabet').disabled = true;
+    $('stopAlphabet').disabled = false;
+    var i = 0;
+    (function next() {
+      if (run.stop || i >= list.length) return end();
+      var L = list[i];
+      $('bigLetter').textContent = L;
+      $('bigLetter').classList.add('listening');
+      renderAlphabet(L);
+      $('alphaStatus').textContent = 'Say “' + L + '” now…';
+      ZoopeVoiceClone.recordLetter(stream, function (l) { $('meterFill').style.width = (l * 100) + '%'; }).then(function (clip) {
+        $('bigLetter').classList.remove('listening');
+        if (run.stop) return end();
+        if (!clip || clip.length < ZoopeVoiceClone.RATE * 0.15) {
+          $('alphaStatus').textContent = 'I didn\'t catch “' + L + '”. Let\'s try again.';
+          return setTimeout(next, 900);
+        }
+        clips[L] = clip;
+        i++;
+        setTimeout(next, 250);
+      }).catch(function (err) { $('alphaStatus').textContent = err.message; end(); });
+    })();
+
+    function end() {
+      $('bigLetter').classList.remove('listening');
+      alphaRun = null;
+      $('startAlphabet').disabled = false;
+      $('stopAlphabet').disabled = true;
+      var stored = saveClips();
+      rebuildClone();
+      renderAlphabet(null);
+      if (!stored) $('alphaStatus').textContent += ' (Browser storage is full, so the recording only lasts until you close this page.)';
+    }
+  }
+
+  $('startAlphabet').addEventListener('click', function () {
+    var todo = LETTERS.filter(function (L) { return !clips[L]; });
+    runAlphabet(todo.length ? todo : LETTERS.slice());
+  });
+  $('stopAlphabet').addEventListener('click', function () { if (alphaRun) alphaRun.stop = true; });
+  $('alphaGrid').addEventListener('click', function (e) {
+    var L = e.target.dataset.letter;
+    if (!L || alphaRun) return;
+    if (!stream) { if (clips[L]) ZoopeVoiceClone.playClip(clips[L]); return; }
+    runAlphabet([L]);
+  });
+  $('testClone').addEventListener('click', function () {
+    if (!cloneVoice) return;
+    var n = state.profile.preferred || 'your zoope';
+    cloneVoice.speak('Hi everyone, ' + n + ' here. Happy to share a quick update.', function (l) { previewLevel = l; });
+  });
+  $('voiceMode').value = state.voiceMode || 'clone';
+  $('voiceMode').addEventListener('change', function () { state.voiceMode = $('voiceMode').value; save(); });
+
+  // Speaks as the user: cloned voice when available and chosen, otherwise the tuned browser voice.
+  function speakAs(text, onLevel) {
+    if (cloneVoice && (state.voiceMode || 'clone') === 'clone') return cloneVoice.speak(text, onLevel);
+    return ZoopeVoice.speak(text, state.voice, onLevel);
+  }
 
   /* ---------------------------- 4. knowledge ---------------------------- */
   $('knowledge').value = state.profile.knowledge || '';
@@ -338,7 +451,7 @@
     var out = [];
     if (!state.profile.names.length) out.push('you haven\'t told zoope your names yet');
     if (!state.face) out.push('your face hasn\'t been scanned');
-    if (!state.voice) out.push('your voice hasn\'t been recorded');
+    if (!state.voice && !hasClone()) out.push('your voice hasn\'t been recorded');
     return out;
   }
 
@@ -425,7 +538,7 @@
         if (room !== r) return;
         line('ai', r.engine.preferred + ' (zoope)', text);
         highlight(null, true);
-        return ZoopeVoice.speak(text, state.voice, function (l) { r.level = l; });
+        return speakAs(text, function (l) { r.level = l; });
       }).then(function () { highlight(null, false); r.level = 0; });
     });
     return r.queue;
@@ -550,5 +663,7 @@
   renderChips();
   startChat();
   refreshAvatarBox();
+  rebuildClone();
+  renderAlphabet(null);
   renderMeetings();
 })();

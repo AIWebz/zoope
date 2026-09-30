@@ -111,6 +111,7 @@
     var ctx = canvas.getContext('2d');
     var W = canvas.width, H = canvas.height;
     state = state || {};
+    if (face && face.kind === 'mesh' && global.ZoopeFaceMesh) return global.ZoopeFaceMesh.render(canvas, face, state);
     ctx.clearRect(0, 0, W, H);
     if (!face) {
       ctx.fillStyle = '#eaf1ff'; ctx.fillRect(0, 0, W, H);

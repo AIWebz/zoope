@@ -75,7 +75,7 @@
     <!-- Step 3: Scan face and voice -->
     <section id="scan" class="card">
       <h2><span class="step">3</span> Scan your face &amp; voice</h2>
-      <p class="muted">Look into the camera with your face inside the oval, then read the sentence out loud. zoope analyses it locally and builds your avatar.</p>
+      <p class="muted">Look into the camera with your face inside the oval, then read the sentence out loud. zoope maps 478 points on your face and turns your real photo into an avatar that talks and blinks, all on this device.</p>
       <div class="scan-grid">
         <div class="cam-box">
           <video id="cam" playsinline muted></video>
@@ -92,9 +92,32 @@
           <div id="scanStatus" class="muted"></div>
         </div>
         <div class="avatar-box">
-          <canvas id="avatarCanvas" width="280" height="280"></canvas>
+          <canvas id="avatarCanvas" width="400" height="400"></canvas>
           <div id="avatarInfo" class="muted small">No avatar yet</div>
           <button class="btn ghost" id="testVoice" disabled>Hear my AI voice</button>
+        </div>
+      </div>
+
+      <div class="alpha-box">
+        <h3>Clone your voice: say the alphabet</h3>
+        <p class="muted">zoope shows one letter at a time. Say the letter's name clearly (“ay”, “bee”, “see”…), then pause. It moves on by itself. Every letter holds sounds zoope cuts out and reuses to speak in your voice. Click a letter to redo it.</p>
+        <div class="alpha-stage">
+          <div class="big-letter" id="bigLetter">A</div>
+          <div class="alpha-side">
+            <div class="alpha-grid" id="alphaGrid"></div>
+            <div class="alpha-actions">
+              <button class="btn" id="startAlphabet" disabled>Start alphabet</button>
+              <button class="btn ghost" id="stopAlphabet" disabled>Stop</button>
+              <button class="btn ghost" id="testClone" disabled>Hear my cloned voice</button>
+              <label class="voice-mode">Meeting voice
+                <select id="voiceMode">
+                  <option value="clone">My cloned voice</option>
+                  <option value="tts">Smooth browser voice</option>
+                </select>
+              </label>
+            </div>
+            <div id="alphaStatus" class="muted small">Turn on the camera &amp; mic above to start.</div>
+          </div>
         </div>
       </div>
     </section>
@@ -132,7 +155,7 @@
       <div class="room-grid">
         <div class="stage" id="stage">
           <div class="tile you-tile">
-            <canvas id="roomAvatar" width="240" height="240"></canvas>
+            <canvas id="roomAvatar" width="400" height="400"></canvas>
             <div class="tile-name" id="roomAvatarName">You (zoope)</div>
           </div>
         </div>
@@ -164,8 +187,10 @@
   <footer class="foot">© zoope — AI that shows up for you.</footer>
 
   <script src="js/engine.js"></script>
+  <script src="js/facemesh.js"></script>
   <script src="js/avatar.js"></script>
   <script src="js/voice.js"></script>
+  <script src="js/voiceclone.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

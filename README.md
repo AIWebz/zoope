@@ -10,11 +10,14 @@ Open `index.html` through any static server, for example `python3 -m http.server
 
 ## How it works
 
+The face model and runtime are bundled in `vendor/` (about 27 MB), so nothing is fetched from outside.
+
 1. **Connect** Zoom, Google Meet or Microsoft Teams.
 2. **Names:** zoope asks for your full name, the names and nicknames people call you, and which one to introduce itself with.
-3. **Scan:** zoope samples your face inside the oval to get skin tone, hair, eye and lip colours, and face shape. It then draws your avatar, which blinks and lip-syncs. It also records 6 seconds of your voice to measure pitch and pace, and tunes the browser's speech voice to match.
-4. **Knowledge:** you write the facts and updates zoope is allowed to share. It answers questions by finding the closest match in those notes (TF-IDF).
-5. **Meetings:** zoope only attends meetings you confirm. Confirmed meetings join automatically at their start time while the page is open.
+3. **Face clone:** the bundled MediaPipe Face Landmarker finds 478 points on your face. zoope splits your real photo into a triangle mesh and warps it live: the jaw drops and lips part as it talks, and the eyelids close to blink. If the photo shows your teeth, the real teeth part too; otherwise teeth and tongue are drawn in. If the model can't load, zoope falls back to a cartoon avatar (`js/facemesh.js`).
+4. **Voice clone:** you say the alphabet one letter at a time. Every letter name holds English speech sounds ("B" = b + ee, "F" = eh + f, "Y" = w + eye…). zoope cuts your recordings into about 27 sound units. To speak, it turns text into sounds using pronunciation rules and joins your own units with pitch smoothing, intonation and crossfades (`js/voiceclone.js`). You can switch meetings to a smooth browser voice tuned to the pitch and pace from a 6-second sentence recording.
+5. **Knowledge:** you write the facts and updates zoope is allowed to share. It answers questions by finding the closest match in those notes (TF-IDF).
+6. **Meetings:** zoope only attends meetings you confirm. Confirmed meetings join automatically at their start time while the page is open.
 
 ### When zoope speaks (`js/engine.js`)
 
@@ -29,3 +32,8 @@ Every line said in a meeting gets a score. zoope speaks when the score reaches 0
 Requests like "Alex, could you draft the email by Thursday?" become action items. Questions zoope can't answer become follow-ups. If someone is called by a name zoope doesn't know (for example "Hey Jay, …"), the meeting summary asks whether that is one of your names.
 
 "zoope's thinking" under the meeting room shows the score and the reasons for each decision.
+
+### Limits
+
+- **Face:** the avatar is your real photo, animated. It looks close to you but not perfect. Big head turns, strong expressions, and the inside of the mouth when the photo shows it closed are approximated.
+- **Voice:** the cloned voice is built from your own recorded sounds, so it has your tone. It still sounds choppy and robotic, because the alphabet doesn't cover every English sound (for example "th", short "i", "h" and "ng"), so those are replaced with the closest sounds. Smooth, natural cloning needs a trained neural model, which can't run inside a web page without a server or API.

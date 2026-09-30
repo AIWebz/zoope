@@ -119,6 +119,7 @@ main { max-width: 1040px; margin: 0 auto; padding: 0 16px 48px; }
 .btn.big { padding: 14px 28px; font-size: 16px; }
 .btn.ghost { background: var(--blue-soft); color: var(--blue); }
 .btn.ghost:hover { background: #d8e5ff; }
+.btn.ghost:disabled { background: #f1f4fa; color: #a9b4c8; }
 .btn.danger { background: var(--danger); }
 .btn.ok { background: var(--ok); }
 
@@ -212,6 +213,28 @@ textarea { width: 100%; resize: vertical; margin-bottom: 10px; }
 .avatar-box { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 #avatarCanvas { width: 100%; max-width: 240px; border-radius: 50%; background: var(--blue-soft); }
 
+/* Alphabet voice clone */
+.alpha-box { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 18px; }
+.alpha-box h3 { margin: 0 0 4px; }
+.alpha-stage { display: grid; grid-template-columns: 160px 1fr; gap: 16px; align-items: start; margin-top: 12px; }
+.big-letter {
+  width: 160px; height: 160px; border-radius: 20px; background: var(--blue-soft);
+  display: flex; align-items: center; justify-content: center;
+  font: bold 96px Arial, Helvetica, sans-serif; color: var(--blue);
+  transition: transform .15s;
+}
+.big-letter.listening { background: var(--blue); color: #fff; transform: scale(1.04); }
+.alpha-side { display: flex; flex-direction: column; gap: 10px; }
+.alpha-grid { display: grid; grid-template-columns: repeat(13, 1fr); gap: 4px; }
+.alpha-grid button {
+  font: bold 14px Arial, Helvetica, sans-serif; padding: 6px 0; border-radius: 8px;
+  border: 1px solid var(--line); background: #fff; color: var(--muted); cursor: pointer;
+}
+.alpha-grid button.done { background: var(--blue); border-color: var(--blue); color: #fff; }
+.alpha-grid button.current { outline: 2px solid var(--blue); outline-offset: 1px; color: var(--blue); }
+.alpha-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.voice-mode { font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; }
+
 /* Meetings */
 .meeting-form { display: grid; grid-template-columns: 2fr 1.2fr 2fr 1.6fr 2fr auto; gap: 8px; margin: 12px 0; }
 .meeting-list { display: flex; flex-direction: column; gap: 10px; }
@@ -276,7 +299,9 @@ textarea { width: 100%; resize: vertical; margin-bottom: 10px; }
 .foot { text-align: center; color: var(--muted); padding: 24px; font-size: 13px; border-top: 1px solid var(--line); }
 
 @media (max-width: 860px) {
-  .platforms, .scan-grid, .room-grid { grid-template-columns: 1fr; }
+  .platforms, .scan-grid, .room-grid, .alpha-stage { grid-template-columns: 1fr; }
+  .big-letter { margin: 0 auto; }
+  .alpha-grid { grid-template-columns: repeat(7, 1fr); }
   .meeting-form { grid-template-columns: 1fr 1fr; }
   .logo { font-size: 56px; }
   .topbar nav a { margin-left: 10px; font-size: 13px; }
