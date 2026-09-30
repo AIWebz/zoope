@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>zoope</title>
+  <meta name="description" content="zoope — your AI avatar that attends Zoom, Google Meet and Microsoft Teams meetings for you.">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a href="#" class="brand">zoope</a>
+    <nav>
+      <a href="#connect">Connect</a>
+      <a href="#names">Names</a>
+      <a href="#scan">Scan</a>
+      <a href="#meetings">Meetings</a>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Hero -->
+    <section class="hero">
+      <div class="orbit-wrap" aria-hidden="true">
+        <div class="orbit">
+          <div class="planet p1"><img src="assets/zoom.jpg" alt=""></div>
+          <div class="planet p2"><img src="assets/meet.png" alt=""></div>
+          <div class="planet p3"><img src="assets/teams.webp" alt=""></div>
+        </div>
+        <div class="orbit-core">zoope</div>
+      </div>
+      <h1 class="logo">zoope</h1>
+      <p class="tagline">Your AI avatar attends meetings for you — with your face, your voice, and good judgement about when to speak.</p>
+      <p class="note">The whole AI engine runs right here in your browser. No APIs, no servers — your face and voice never leave this device.</p>
+      <a href="#connect" class="btn big">Get started</a>
+    </section>
+
+    <!-- Step 1: Connect -->
+    <section id="connect" class="card">
+      <h2><span class="step">1</span> Connect your meeting apps</h2>
+      <p class="muted">Pick the platforms zoope is allowed to join on your behalf.</p>
+      <div class="platforms">
+        <div class="platform" data-platform="zoom">
+          <img src="assets/zoom.jpg" alt="Zoom">
+          <div class="pname">Zoom</div>
+          <input type="email" placeholder="Zoom account email" class="acct">
+          <button class="btn connect-btn">Connect</button>
+        </div>
+        <div class="platform" data-platform="meet">
+          <img src="assets/meet.png" alt="Google Meet">
+          <div class="pname">Google Meet</div>
+          <input type="email" placeholder="Google account email" class="acct">
+          <button class="btn connect-btn">Connect</button>
+        </div>
+        <div class="platform" data-platform="teams">
+          <img src="assets/teams.webp" alt="Microsoft Teams">
+          <div class="pname">Microsoft Teams</div>
+          <input type="email" placeholder="Microsoft account email" class="acct">
+          <button class="btn connect-btn">Connect</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Step 2: Names (zoope asks) -->
+    <section id="names" class="card">
+      <h2><span class="step">2</span> Let zoope get to know you</h2>
+      <div class="chat" id="setupChat"></div>
+      <form class="chat-input" id="setupForm">
+        <input id="setupInput" autocomplete="off" placeholder="Type your answer…">
+        <button class="btn">Send</button>
+      </form>
+      <div class="chips" id="nameChips"></div>
+    </section>
+
+    <!-- Step 3: Scan face and voice -->
+    <section id="scan" class="card">
+      <h2><span class="step">3</span> Scan your face &amp; voice</h2>
+      <p class="muted">Look into the camera with your face inside the oval, then read the sentence out loud. zoope analyses it locally and builds your avatar.</p>
+      <div class="scan-grid">
+        <div class="cam-box">
+          <video id="cam" playsinline muted></video>
+          <div class="oval-guide"></div>
+          <div class="scan-line" id="scanLine"></div>
+          <div class="cam-placeholder" id="camPlaceholder">Camera is off</div>
+        </div>
+        <div class="scan-controls">
+          <button class="btn" id="startCam">Turn on camera &amp; mic</button>
+          <button class="btn" id="scanFace" disabled>Scan face</button>
+          <div class="read-this">Read aloud: <em>“Hi everyone, thanks for having me. I'm happy to share a quick update and answer any questions.”</em></div>
+          <button class="btn" id="recordVoice" disabled>Record voice (6s)</button>
+          <div class="meter"><div id="meterFill"></div></div>
+          <div id="scanStatus" class="muted"></div>
+        </div>
+        <div class="avatar-box">
+          <canvas id="avatarCanvas" width="280" height="280"></canvas>
+          <div id="avatarInfo" class="muted small">No avatar yet</div>
+          <button class="btn ghost" id="testVoice" disabled>Hear my AI voice</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Step 4: Knowledge -->
+    <section id="brain" class="card">
+      <h2><span class="step">4</span> Teach zoope what to say</h2>
+      <p class="muted">Write updates, facts and opinions zoope may share. It only answers from what you give it — anything else becomes a follow-up for you.</p>
+      <textarea id="knowledge" rows="6" placeholder="e.g. The website redesign is 80% done and launches on October 14. I'm working on the checkout page this week. Budget questions should go to Priya. I prefer Tuesday afternoons for reviews."></textarea>
+      <button class="btn" id="saveKnowledge">Save knowledge</button>
+      <span id="knowledgeSaved" class="muted small"></span>
+    </section>
+
+    <!-- Step 5: Meetings -->
+    <section id="meetings" class="card">
+      <h2><span class="step">5</span> Meetings</h2>
+      <p class="muted">zoope only joins meetings you confirm. Want to see how it behaves first? <button class="btn ghost" id="demoBtnTop">▶ Try a demo meeting</button></p>
+      <form id="meetingForm" class="meeting-form">
+        <input id="mTitle" placeholder="Meeting title" required>
+        <select id="mPlatform"></select>
+        <input id="mLink" placeholder="Meeting link (optional)">
+        <input id="mTime" type="datetime-local" required>
+        <input id="mPeople" placeholder="Other attendees (comma separated)">
+        <button class="btn">Add meeting</button>
+      </form>
+      <div id="meetingList" class="meeting-list"></div>
+    </section>
+
+    <!-- Meeting room -->
+    <section id="room" class="card hidden">
+      <div class="room-head">
+        <h2 id="roomTitle">Meeting</h2>
+        <button class="btn danger" id="leaveRoom">Leave meeting</button>
+      </div>
+      <div class="room-grid">
+        <div class="stage" id="stage">
+          <div class="tile you-tile">
+            <canvas id="roomAvatar" width="240" height="240"></canvas>
+            <div class="tile-name" id="roomAvatarName">You (zoope)</div>
+          </div>
+        </div>
+        <div class="side">
+          <div class="transcript" id="transcript"></div>
+          <form id="sayForm" class="say-form">
+            <select id="speaker"></select>
+            <input id="sayInput" autocomplete="off" placeholder="What does this person say?">
+            <button class="btn">Say</button>
+          </form>
+          <div class="room-tools">
+            <button class="btn ghost" id="listenBtn">🎤 Listen to room</button>
+            <button class="btn ghost" id="demoBtn">▶ Play demo meeting</button>
+          </div>
+        </div>
+      </div>
+      <details class="brain-log" open>
+        <summary>zoope's thinking</summary>
+        <div id="decisionLog"></div>
+      </details>
+    </section>
+
+    <section id="summary" class="card hidden">
+      <h2>Meeting summary</h2>
+      <div id="summaryBody"></div>
+    </section>
+  </main>
+
+  <footer class="foot">© zoope — AI that shows up for you.</footer>
+
+  <script src="js/engine.js"></script>
+  <script src="js/avatar.js"></script>
+  <script src="js/voice.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

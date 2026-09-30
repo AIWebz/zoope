@@ -1,0 +1,415 @@
+/*
+ * zoope brain — runs entirely in the browser, no external APIs.
+ *
+ * For every line said in a meeting it decides whether the user's avatar
+ * should speak (turn-taking score) and, if so, what to say (intent
+ * detection + retrieval over the user's own knowledge notes).
+ */
+(function (global) {
+  'use strict';
+
+  var STOP = ('a an the and or but if so to of in on at for with from by is are was were be been being am ' +
+    'i me my we our you your he she it they them their this that these those do does did have has had ' +
+    'will would can could should shall may might must just about into over than then there here what ' +
+    'which who whom how when where why not no yes ok okay um uh like also very really get got let lets ' +
+    'going go gonna want any some all its it\'s i\'m im you\'re we\'re there\'s that\'s let\'s let\' ' +
+    'everyone everybody anyone thanks thank great sure yep yeah hey hi hello bye right now today okay hear').split(' ');
+  var STOPSET = {};
+  STOP.forEach(function (w) { STOPSET[w] = true; });
+
+  var QUESTION_START = /^(what|how|why|when|where|who|which|can|could|would|will|do|does|did|is|are|was|were|should|have|has|any|anything|shall|may)\b/i;
+  var GROUP_ASK = /\b(anyone|anybody|everyone|everybody|all of you|you all|y'all|folks|team|thoughts|any updates|go around|round the room|around the room|any questions|any objections)\b/i;
+  var GREETING = /^(hi|hello|hey|good (morning|afternoon|evening)|welcome|morning)\b/i;
+  var FAREWELL = /\b(bye|goodbye|see you|talk soon|that's all|thats all|wrap (it )?up|end the (call|meeting)|have a good (one|day|weekend))\b/i;
+  var THANKS = /\b(thanks|thank you|cheers|appreciate it)\b/i;
+  var HEAR_CHECK = /\b(can (you|everyone|everybody|you all|y'all|people) hear (me|us)|are you (there|with us)|you on mute|are you muted)\b/i;
+  var INTRO = /\b(introduce yourself|who('s| is) (this|that|on the call|joining)|who are you|what should we call you|what do (we|people) call you|what's your name|what is your name)\b/i;
+  var UPDATE = /\b(update|status|progress|how('s| is) (it|that|the \w+) going|where are (we|you) (at|with)|what are you working on|what have you been|what's new|anything new)\b/i;
+  var AVAIL = /\b(available|free|can you make|does .* work for you|what time works|schedule|calendar|when can you)\b/i;
+  var OPINION = /\b(what do you think|thoughts|your (take|opinion|view)|do you agree|agree\?|how do you feel|sound good|sounds good\?|make sense\?)\b/i;
+  var REQUEST = /\b(can|could|would|will) you (please )?(send|share|take|handle|own|look|check|write|draft|review|follow|prepare|set up|update|fix|finish|send over|circle back|ping|email|book|schedule|create|put together)\b/i;
+  var DEADLINE = /\b(by|before|until|due|on)\s+(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|end of (the )?(day|week|month)|eod|eow|next week|next \w+|\w+ \d{1,2}(st|nd|rd|th)?)\b/i;
+  var TRAILING = /(\b(and|but|so|because|or|um|uh|like)|,|…|\.\.\.)\s*$/i;
+  var THIRD_PERSON_AFTER = /^('s|\s+(is|was|has|had|will|said|did|does|and|or|mentioned|thinks|told))\b/i;
+
+  function norm(s) { return String(s || '').toLowerCase().replace(/[’`]/g, "'"); }
+
+  function stem(w) {
+    if (w.length > 5 && /ing$/.test(w)) return w.slice(0, -3);
+    if (w.length > 4 && /ed$/.test(w)) return w.slice(0, -2);
+    if (w.length > 4 && /ies$/.test(w)) return w.slice(0, -3) + 'y';
+    if (w.length > 4 && /(ch|sh|x|ss)es$/.test(w)) return w.slice(0, -2);
+    if (w.length > 3 && /s$/.test(w) && !/ss$/.test(w)) return w.slice(0, -1);
+    return w;
+  }
+
+  function tokens(s) {
+    return (norm(s).match(/[a-z0-9']+/g) || [])
+      .filter(function (w) { return !STOPSET[w] && w.length > 1; })
+      .map(stem);
+  }
+
+  function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+  function levenshtein(a, b) {
+    if (a === b) return 0;
+    var m = a.length, n = b.length, prev = [], cur, i, j;
+    for (j = 0; j <= n; j++) prev[j] = j;
+    for (i = 1; i <= m; i++) {
+      cur = [i];
+      for (j = 1; j <= n; j++) {
+        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      }
+      prev = cur;
+    }
+    return prev[n];
+  }
+
+  function splitSentences(text) {
+    return String(text || '')
+      .split(/(?<=[.!?])\s+|\n+/)
+      .map(function (s) { return s.trim(); })
+      .filter(function (s) { return s.length > 2; });
+  }
+
+  function pick(arr, seed) { return arr[Math.abs(seed) % arr.length]; }
+
+  function capitalise(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+  /* ---------- Knowledge retrieval (TF-IDF over the user's notes) ---------- */
+
+  function KnowledgeBase(text) {
+    this.sentences = splitSentences(text);
+    this.docs = this.sentences.map(tokens);
+    var df = {};
+    this.docs.forEach(function (d) {
+      var seen = {};
+      d.forEach(function (t) { if (!seen[t]) { seen[t] = true; df[t] = (df[t] || 0) + 1; } });
+    });
+    var N = this.docs.length || 1;
+    this.idf = {};
+    for (var t in df) this.idf[t] = Math.log(1 + N / df[t]);
+  }
+
+  KnowledgeBase.prototype.search = function (query, k) {
+    var q = tokens(query), self = this;
+    if (!q.length || !this.docs.length) return [];
+    var qset = {};
+    q.forEach(function (t) { qset[t] = true; });
+    var qnorm = Math.sqrt(Object.keys(qset).reduce(function (s, t) {
+      var w = self.idf[t] || Math.log(1 + self.docs.length); return s + w * w;
+    }, 0));
+    return this.docs.map(function (d, i) {
+      var dset = {}, dot = 0, dn = 0;
+      d.forEach(function (t) { dset[t] = true; });
+      for (var t in dset) {
+        var w = self.idf[t] || 0;
+        dn += w * w;
+        if (qset[t]) dot += w * w;
+      }
+      return { text: self.sentences[i], score: dn && qnorm ? dot / (Math.sqrt(dn) * qnorm) : 0 };
+    }).filter(function (r) { return r.score > 0; })
+      .sort(function (a, b) { return b.score - a.score; })
+      .slice(0, k || 2);
+  };
+
+  /* ---------------------------- Engine ---------------------------- */
+
+  function ZoopeEngine(profile, opts) {
+    opts = opts || {};
+    this.profile = profile || {};
+    this.names = (profile.names || []).concat(profile.fullName ? [profile.fullName] : [])
+      .map(function (n) { return norm(n).trim(); })
+      .filter(Boolean);
+    // first name from full name also counts
+    if (profile.fullName) this.names.push(norm(profile.fullName).split(/\s+/)[0]);
+    this.names = this.names.filter(function (n, i, a) { return a.indexOf(n) === i; });
+    this.preferred = profile.preferred || (profile.names && profile.names[0]) || (profile.fullName || 'me').split(' ')[0];
+    this.kb = new KnowledgeBase(profile.knowledge || '');
+    this.attendees = (opts.attendees || []).map(function (a) { return a.trim(); }).filter(Boolean);
+    this.threshold = opts.threshold || 0.5;
+    this.history = [];
+    this.turn = 0;
+    this.lastAITurn = -99;
+    this.actionItems = [];
+    this.followUps = [];
+    this.unknownNames = [];
+    this.answered = 0;
+    this.decisions = [];
+  }
+
+  ZoopeEngine.prototype.isMyName = function (word) {
+    word = norm(word);
+    for (var i = 0; i < this.names.length; i++) {
+      var n = this.names[i];
+      if (word === n) return true;
+      // tolerate speech-to-text misspellings on longer names
+      if (n.length >= 5 && Math.abs(n.length - word.length) <= 1 && levenshtein(n, word) <= 1) return true;
+    }
+    return false;
+  };
+
+  // Finds how my names appear in a line: 'vocative' (talking to me), 'mention' (about me) or null.
+  ZoopeEngine.prototype.findMyName = function (text) {
+    var t = norm(text), best = null;
+    for (var i = 0; i < this.names.length; i++) {
+      var re = new RegExp('(^|[^a-z])(' + escapeRe(this.names[i]) + ')(?![a-z])', 'g'), m;
+      while ((m = re.exec(t))) {
+        var after = t.slice(m.index + m[0].length);
+        if (THIRD_PERSON_AFTER.test(after)) { best = best || 'mention'; } else { return 'vocative'; }
+      }
+    }
+    if (best) return best;
+    // fuzzy match on single words (speech recognition errors)
+    var words = t.match(/[a-z']+/g) || [];
+    for (var j = 0; j < words.length; j++) {
+      if (words[j].length >= 4 && this.isMyName(words[j])) return 'vocative';
+    }
+    return null;
+  };
+
+  // Is the line directed at a *different* attendee? e.g. "Sam, can you…" / "…, Sam?"
+  ZoopeEngine.prototype.addressedToOther = function (text, speaker) {
+    var t = norm(text).trim(), self = this;
+    for (var i = 0; i < this.attendees.length; i++) {
+      var a = norm(this.attendees[i]).split(/\s+/)[0];
+      if (!a || a === norm(speaker).split(/\s+/)[0] || self.isMyName(a)) continue;
+      var start = new RegExp('(^|[.!?]\\s+)(hey |hi |ok |okay |so |and )?' + escapeRe(a) + '\\s*[,:]');
+      var end = new RegExp('[,]\\s*' + escapeRe(a) + '\\s*[?.!]*$');
+      var over = new RegExp('\\b(over to|what about|how about|thanks|thank you),?\\s+' + escapeRe(a) + '\\b');
+      if (start.test(t) || end.test(t) || over.test(t)) return this.attendees[i];
+    }
+    return null;
+  };
+
+  // A capitalised vocative that is neither an attendee nor one of my names might be a nickname.
+  ZoopeEngine.prototype.unknownVocative = function (text) {
+    var m = String(text).match(/^(?:[Hh]ey |[Hh]i |[Oo]k |[Ss]o )?([A-Z][a-zA-Z]{1,14})[,:]\s/) ||
+            String(text).match(/,\s*([A-Z][a-zA-Z]{1,14})\s*[?.!]*$/);
+    if (!m) return null;
+    var w = m[1], lw = norm(w), self = this;
+    var common = ['so', 'ok', 'okay', 'well', 'right', 'yes', 'no', 'thanks', 'great', 'sure', 'guys', 'everyone', 'team', 'all', 'folks', 'also', 'and', 'but', 'now', 'alright',
+      'yeah', 'yep', 'honestly', 'actually', 'look', 'listen', 'first', 'second', 'next', 'finally', 'anyway', 'hmm',
+      'perfect', 'cool', 'awesome', 'nice', 'good', 'sorry', 'hello', 'hi', 'hey', 'morning', 'basically', 'however',
+      'then', 'again', 'otherwise', 'plus', 'oh', 'wow', 'true', 'exactly', 'absolutely', 'definitely', 'agreed',
+      'correct', 'understood', 'noted', 'today', 'tomorrow', 'yesterday', 'bye', 'please', 'guys', 'people'];
+    if (common.indexOf(lw) >= 0 || this.isMyName(lw)) return null;
+    if (this.attendees.some(function (a) { return norm(a).split(/\s+/)[0] === lw; })) return null;
+    if (self.unknownNames.indexOf(w) >= 0) return null;
+    return w;
+  };
+
+  ZoopeEngine.prototype.isQuestion = function (text) {
+    var t = String(text).trim();
+    return /\?\s*$/.test(t) || QUESTION_START.test(t.replace(/^[A-Za-z]+,\s*/, ''));
+  };
+
+  /* Decide whether to speak. Returns {speak, score, reasons, intent, reply} */
+  ZoopeEngine.prototype.hear = function (speaker, text) {
+    this.turn++;
+    var entry = { turn: this.turn, speaker: speaker, text: text, ai: false };
+    this.history.push(entry);
+
+    var reasons = [], score = 0;
+    var t = String(text || '').trim();
+    var question = this.isQuestion(t);
+    var nameUse = this.findMyName(t);
+    var other = this.addressedToOther(t, speaker);
+    var turnsSinceMe = this.turn - this.lastAITurn;
+    var hits = this.kb.search(t, 2);
+    var relevance = hits.length ? hits[0].score : 0;
+    var intent = this.intentOf(t);
+
+    if (nameUse === 'vocative') {
+      score += question || intent !== 'statement' ? 0.9 : 0.6;
+      reasons.push('Called by name (+' + (question || intent !== 'statement' ? '0.9' : '0.6') + ')');
+    } else if (nameUse === 'mention') {
+      score += 0.15;
+      reasons.push('Talked about, not to (+0.15)');
+    }
+
+    if (other && nameUse !== 'vocative') {
+      score -= 0.9;
+      reasons.push('Directed at ' + other + ' — not my turn (−0.9)');
+    }
+
+    if (!nameUse && !other && GROUP_ASK.test(t) && question) {
+      var g = 0.3 + Math.min(0.4, relevance);
+      score += g;
+      reasons.push('Question to the whole group (+' + g.toFixed(2) + ')');
+    }
+
+    var followUp = !nameUse && !other && turnsSinceMe <= 2 && question && (/\byou(r)?\b/i.test(t) || relevance >= 0.2);
+    if (followUp) {
+      score += 0.55;
+      reasons.push('Follow-up to what I just said (+0.55)');
+    }
+
+    if (!nameUse && !other && !followUp && question && relevance >= 0.3 && !GROUP_ASK.test(t)) {
+      var r = Math.min(0.35, relevance * 0.5);
+      score += r;
+      reasons.push('Question about something I know (+' + r.toFixed(2) + ')');
+    }
+
+    if ((intent === 'hearcheck' || intent === 'intro') && !other) {
+      score += 0.4;
+      reasons.push('Check-in / introduction request (+0.4)');
+    }
+
+    if (intent === 'farewell' && !other && this.turn > 2) {
+      score += 0.55;
+      reasons.push('Meeting is wrapping up (+0.55)');
+    }
+
+    if (turnsSinceMe === 1 && nameUse !== 'vocative' && !followUp && intent !== 'farewell') {
+      score -= 0.2;
+      reasons.push('I just spoke — avoid dominating (−0.2)');
+    }
+
+    if (TRAILING.test(t) && !question) {
+      score -= 0.5;
+      reasons.push('Speaker has not finished — don\'t interrupt (−0.5)');
+    }
+
+    // Record action items addressed to me even if we then reply.
+    if (REQUEST.test(t) && (nameUse === 'vocative' || (!other && turnsSinceMe <= 2))) {
+      var dl = t.match(DEADLINE);
+      this.actionItems.push({ from: speaker, text: t, due: dl ? dl[0] : null });
+      reasons.push('Logged as an action item');
+    }
+
+    var unknown = this.unknownVocative(t);
+    if (unknown) {
+      this.unknownNames.push(unknown);
+      reasons.push('Someone was called “' + unknown + '” — I\'ll ask if that\'s you');
+    }
+
+    score = Math.max(-1, Math.min(1.5, score));
+    var speak = score >= this.threshold;
+    var reply = speak ? this.respond(speaker, t, intent, hits) : null;
+    if (reply && this.history.some(function (h) { return h.ai && h.text.indexOf(reply.replace(/^(Sure\. |Quick update: |Yes — )/, '')) >= 0; })) {
+      reply = 'Just to confirm — ' + reply.charAt(0).toLowerCase() + reply.slice(1);
+    }
+    if (!speak) reasons.push('Staying quiet (' + score.toFixed(2) + ' < ' + this.threshold + ')');
+
+    var decision = { speaker: speaker, text: t, score: score, speak: speak, reasons: reasons, intent: intent, reply: reply };
+    this.decisions.push(decision);
+    if (speak) this.said(reply);
+    return decision;
+  };
+
+  ZoopeEngine.prototype.said = function (text) {
+    this.turn++;
+    this.lastAITurn = this.turn;
+    this.history.push({ turn: this.turn, speaker: this.preferred, text: text, ai: true });
+  };
+
+  ZoopeEngine.prototype.intentOf = function (t) {
+    if (HEAR_CHECK.test(t)) return 'hearcheck';
+    if (INTRO.test(t)) return 'intro';
+    if (FAREWELL.test(t)) return 'farewell';
+    if (REQUEST.test(t)) return 'request';
+    if (AVAIL.test(t)) return 'availability';
+    if (UPDATE.test(t)) return 'update';
+    if (OPINION.test(t)) return 'opinion';
+    if (GREETING.test(t) && t.split(/\s+/).length <= 6) return 'greeting';
+    if (THANKS.test(t) && !this.isQuestion(t)) return 'thanks';
+    if (this.isQuestion(t)) return 'question';
+    return 'statement';
+  };
+
+  ZoopeEngine.prototype.fromKnowledge = function (hits, min) {
+    var good = hits.filter(function (h) { return h.score >= (min || 0.18); });
+    if (!good.length) return null;
+    var out = good[0].text;
+    if (good[1] && good[1].score > good[0].score * 0.7) out += ' ' + good[1].text;
+    return out;
+  };
+
+  ZoopeEngine.prototype.followUp = function (speaker, t) {
+    this.followUps.push({ from: speaker, text: t });
+    return 'follow up on that';
+  };
+
+  ZoopeEngine.prototype.respond = function (speaker, t, intent, hits) {
+    var who = String(speaker || '').split(/\s+/)[0];
+    var seed = this.turn + t.length;
+    var known = this.fromKnowledge(hits);
+    var me = this.preferred;
+    var self = this;
+
+    switch (intent) {
+      case 'hearcheck':
+        return pick(['Yes, I can hear you clearly.', 'Loud and clear, ' + who + '.', 'Yep, I\'m here and can hear you.'], seed);
+      case 'intro':
+        var others = this.names.filter(function (n) { return norm(n) !== norm(me) && n.indexOf(' ') < 0; }).map(capitalise);
+        return 'Hi, I\'m ' + (this.profile.fullName || me) + '. Please call me ' + me +
+          (others.length ? ' — ' + others.slice(0, 2).join(' or ') + ' works too' : '') + '.';
+      case 'greeting':
+        return pick(['Hi ' + who + '!', 'Hey ' + who + ', good to see you.', 'Hello everyone!'], seed);
+      case 'farewell':
+        return pick(['Thanks everyone, talk soon!', 'Thanks all — bye!', 'Great meeting, see you next time.'], seed);
+      case 'thanks':
+        return pick(['Of course!', 'Happy to help.', 'Anytime, ' + who + '.'], seed);
+      case 'request':
+        var dl = t.match(DEADLINE);
+        return pick(['Sure, I\'ll take that on', 'Yes, I can do that', 'Got it — I\'ll handle it'], seed) +
+          (dl ? ' ' + dl[0] : '') + '. I\'m noting it down now.' + (known ? ' For context: ' + known : '');
+      case 'availability':
+        if (known) return known;
+        this.followUp(speaker, t);
+        return 'Let me check my calendar and get back to you with times right after the meeting.';
+      case 'update':
+        if (known) return pick(['Sure. ', 'Quick update: ', 'Yes — '], seed) + known;
+        this.followUp(speaker, t);
+        return 'Nothing major to flag from my side right now — I\'ll send a written update after the call.';
+      case 'opinion':
+        if (known) return pick(['I think ', 'From my side, ', 'My take: '], seed) + lowerFirst(known);
+        this.followUp(speaker, t);
+        return 'Sounds reasonable to me. I\'d like to look at the details, and I\'ll share my thoughts in writing after the meeting.';
+      case 'question':
+        if (known) { this.answered++; return known; }
+        this.followUp(speaker, t);
+        return pick([
+          'Good question — I don\'t have that in front of me. I\'ll follow up after the meeting.',
+          'I\'m not sure off the top of my head, ' + who + '. Let me confirm and get back to you.',
+          'Let me double-check that and send it over after the call.'
+        ], seed);
+      default:
+        if (known) return known;
+        return pick(['Got it, thanks ' + who + '.', 'Makes sense.', 'Noted, thanks.'], seed);
+    }
+
+    function lowerFirst(s) { return /^I\b/.test(s) ? s : s.charAt(0).toLowerCase() + s.slice(1); }
+  };
+
+  ZoopeEngine.prototype.greetOnJoin = function () {
+    var line = 'Hi everyone, ' + this.preferred + ' here.';
+    // the join greeting shouldn't count against turn-taking
+    this.history.push({ turn: this.turn, speaker: this.preferred, text: line, ai: true });
+    return line;
+  };
+
+  ZoopeEngine.prototype.summary = function () {
+    var counts = {}, freq = {}, skip = {};
+    this.names.concat(this.attendees).forEach(function (n) { norm(n).split(/\s+/).forEach(function (w) { skip[stem(w)] = true; }); });
+    this.history.forEach(function (h) {
+      counts[h.speaker] = (counts[h.speaker] || 0) + 1;
+      if (!h.ai) tokens(h.text).forEach(function (w) { if (w.length > 3 && !skip[w]) freq[w] = (freq[w] || 0) + 1; });
+    });
+    var topics = Object.keys(freq).sort(function (a, b) { return freq[b] - freq[a]; }).slice(0, 6);
+    return {
+      turns: this.history.length,
+      speakers: counts,
+      spoke: this.decisions.filter(function (d) { return d.speak; }).length,
+      stayedQuiet: this.decisions.filter(function (d) { return !d.speak; }).length,
+      topics: topics,
+      actionItems: this.actionItems,
+      followUps: this.followUps,
+      unknownNames: this.unknownNames
+    };
+  };
+
+  global.ZoopeEngine = ZoopeEngine;
+  global.ZoopeKnowledgeBase = KnowledgeBase;
+})(window);
