@@ -114,9 +114,12 @@
     if (face && face.kind === 'mesh' && global.ZoopeFaceMesh) return global.ZoopeFaceMesh.render(canvas, face, state);
     ctx.clearRect(0, 0, W, H);
     if (!face) {
-      ctx.fillStyle = '#eaf1ff'; ctx.fillRect(0, 0, W, H);
-      ctx.fillStyle = '#0b5cff'; ctx.font = 'bold ' + (W * 0.12) + 'px Arial';
-      ctx.textAlign = 'center'; ctx.fillText('?', W / 2, H / 2 + W * 0.04);
+      // no face yet: a round badge, like the other attendees' tiles
+      ctx.fillStyle = '#0b5cff';
+      ctx.beginPath(); ctx.arc(W / 2, H / 2, W * 0.2, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold ' + (W * 0.14) + 'px Arial';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('?', W / 2, H / 2 + W * 0.01);
       return;
     }
     // background (drawn before the head tilt so it stays square)

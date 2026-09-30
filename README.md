@@ -6,6 +6,8 @@ The whole AI engine runs in the browser scripts. It uses no APIs and no servers,
 
 ## Run it
 
+The site has five pages, each with its own link: Landing (`#/`), Setup (`#/setup`), Clone (`#/clone`), Demo (`#/demo`) and Meetings (`#/meetings`). A blue curtain wipe plays when you switch pages.
+
 Open `index.html` through any static server, for example `python3 -m http.server`. Then go to http://localhost:8000. The camera and mic only work on `localhost` or over HTTPS.
 
 ## How it works

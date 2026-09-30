@@ -218,6 +218,20 @@
     });
   });
 
+  // Turns the camera and mic off (used when leaving the Clone page).
+  function stopCamera() {
+    if (alphaRun) alphaRun.stop = true;
+    if (!stream) return;
+    stream.getTracks().forEach(function (t) { t.stop(); });
+    stream = null;
+    cam.srcObject = null;
+    $('camPlaceholder').classList.remove('hidden');
+    $('startCam').disabled = false;
+    $('startCam').textContent = 'Turn on camera & mic';
+    ['scanFace', 'recordVoice', 'startAlphabet'].forEach(function (id) { $(id).disabled = true; });
+    renderAlphabet(null);
+  }
+
   $('scanFace').addEventListener('click', function () {
     var line = $('scanLine');
     line.classList.add('on');
@@ -408,7 +422,7 @@
   $('meetingForm').addEventListener('submit', function (e) {
     e.preventDefault();
     var platform = $('mPlatform').value;
-    if (!state.platforms[platform]) { alert('Connect ' + PLATFORMS[platform].name + ' first (step 1).'); return; }
+    if (!state.platforms[platform]) { alert('Connect ' + PLATFORMS[platform].name + ' first on the Setup page.'); return; }
     var link = $('mLink').value.trim();
     if (link && !/^https?:\/\//i.test(link)) link = 'https://' + link;
     state.meetings.push({
@@ -489,6 +503,12 @@
       demoTimer: null
     };
 
+    // the room lives on the Demo page for the demo, and on the Meetings page otherwise
+    room.page = m.demo ? 'demo' : 'meetings';
+    var slot = $(m.demo ? 'demoSlot' : 'meetingSlot');
+    slot.appendChild($('room'));
+    slot.appendChild($('summary'));
+    $('demoBtn').classList.toggle('hidden', !m.demo);
     $('room').classList.remove('hidden');
     $('summary').classList.add('hidden');
     $('roomTitle').textContent = m.title + ' — ' + PLATFORMS[m.platform].name;
@@ -512,7 +532,8 @@
     var problems = readinessProblems();
     if (problems.length) sys('Heads up: ' + problems.join('; ') + '.');
     aiSay(room.engine.greetOnJoin());
-    $('room').scrollIntoView({ behavior: 'smooth' });
+    if (currentRoute !== room.page) navigate(room.page);
+    else setTimeout(function () { $('room').scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 50);
   }
 
   function sys(text) { line('sys', null, text); }
@@ -592,6 +613,7 @@
       demoMeeting = { id: 'demo', demo: true, title: 'Weekly sync (demo)', platform: Object.keys(state.platforms)[0] || 'zoom', people: people, time: new Date().toISOString() };
     }
     joinMeeting(demoMeeting, { sampleKnowledge: true });
+    $('demoIntro').classList.add('hidden');
     if (!state.profile.knowledge) sys('No knowledge saved yet — using sample notes for this demo.');
     var me = room.engine.preferred;
     var script = [
@@ -629,7 +651,9 @@
     if (window.speechSynthesis) speechSynthesis.cancel();
     $('listenBtn').textContent = '🎤 Listen to room';
     $('room').classList.add('hidden');
+    if (r.page === 'demo') { $('demoIntro').classList.remove('hidden'); $('demoBtnTop').innerHTML = '&#9654; Run the demo again'; }
     if (showSummary) renderSummary(r);
+    else $('summary').classList.add('hidden');
   }
 
   function renderSummary(r) {
@@ -647,7 +671,7 @@
     }
     $('summaryBody').innerHTML = html;
     $('summary').classList.remove('hidden');
-    $('summary').scrollIntoView({ behavior: 'smooth' });
+    $('summary').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   $('summaryBody').addEventListener('click', function (e) {
@@ -658,6 +682,55 @@
     bot('Thanks! I\'ll also answer to “' + n + '” from now on.');
   });
 
+  /* ------------------------------- pages -------------------------------- */
+  var ROUTES = ['home', 'setup', 'clone', 'demo', 'meetings'];
+  var currentRoute = null, navToken = 0;
+  var reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function routeFromHash() {
+    var r = location.hash.replace(/^#\/?/, '').split(/[/?]/)[0] || 'home';
+    return ROUTES.indexOf(r) >= 0 ? r : 'home';
+  }
+
+  function navigate(route) {
+    if (location.hash !== '#/' + (route === 'home' ? '' : route)) location.hash = '#/' + (route === 'home' ? '' : route);
+    else go(route);
+  }
+
+  function showPage(route) {
+    document.querySelectorAll('.page').forEach(function (pg) {
+      var on = pg.dataset.page === route;
+      pg.classList.toggle('active', on);
+      if (on) pg.querySelectorAll('.reveal').forEach(function (el, i) { el.style.setProperty('--i', Math.min(i, 10)); });
+    });
+    document.querySelectorAll('.topbar nav a').forEach(function (a) { a.classList.toggle('active', a.dataset.route === route); });
+    document.body.dataset.route = route;
+    window.scrollTo(0, 0);
+    if (route === 'demo') $('demoIntro').classList.toggle('hidden', !!(room && room.page === 'demo'));
+    var title = { home: 'zoope', setup: 'Setup · zoope', clone: 'Clone · zoope', demo: 'Demo meeting · zoope', meetings: 'Meetings · zoope' };
+    document.title = title[route];
+  }
+
+  function go(route, instant) {
+    if (route === currentRoute) return;
+    var prev = currentRoute;
+    currentRoute = route;
+    if (prev === 'clone') stopCamera();
+    if (room && room.page === prev) leaveRoom(false);
+    var token = ++navToken, curtain = $('curtain');
+    if (instant || reduceMotion) { showPage(route); return; }
+    // curtain wipe: sweep up to cover, swap the page, sweep away upward
+    curtain.className = 'curtain cover';
+    setTimeout(function () {
+      if (token !== navToken) return;
+      showPage(route);
+      curtain.className = 'curtain reveal-out';
+      setTimeout(function () { if (token === navToken) curtain.className = 'curtain'; }, 650);
+    }, 520);
+  }
+
+  window.addEventListener('hashchange', function () { go(routeFromHash()); });
+
   /* ------------------------------- init -------------------------------- */
   renderPlatforms();
   renderChips();
@@ -666,4 +739,5 @@
   rebuildClone();
   renderAlphabet(null);
   renderMeetings();
+  go(routeFromHash(), true);
 })();
