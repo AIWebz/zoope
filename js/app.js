@@ -1,4 +1,4 @@
-/* zoope app — wires the UI to the on-device engine, avatar and voice modules. */
+/* zoope app: wires the UI to the on-device engine, avatar and voice modules. */
 (function () {
   'use strict';
 
@@ -18,6 +18,7 @@
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
+  function icon(name, cls) { return '<svg class="icon' + (cls ? ' ' + cls : '') + '" aria-hidden="true"><use href="#i-' + name + '"/></svg>'; }
 
   /* ------------------------------ storage ------------------------------ */
   var state = load();
@@ -31,25 +32,48 @@
   }
   function save() {
     try { localStorage.setItem('zoope', JSON.stringify(state)); } catch (e) { /* ignore */ }
+    renderChecklist();
   }
 
-  /* ----------------------------- 1. connect ---------------------------- */
+  /* ---------------------------- toasts + dialog ---------------------------- */
+  function toast(msg, kind) {
+    var t = document.createElement('div');
+    t.className = 'toast' + (kind === 'error' ? ' error' : '');
+    t.innerHTML = icon(kind === 'error' ? 'stop' : 'check') + '<span>' + esc(msg) + '</span>';
+    $('toasts').appendChild(t);
+    setTimeout(function () { t.classList.add('out'); setTimeout(function () { t.remove(); }, 220); }, 3200);
+  }
+
+  var dialogResolve = null;
+  function confirmDialog(opts) {
+    $('dialogTitle').textContent = opts.title;
+    $('dialogBody').innerHTML = opts.body;
+    $('dialogOk').textContent = opts.ok || 'Confirm';
+    $('dialogOk').className = 'btn ' + (opts.danger ? 'btn-danger' : 'btn-primary');
+    $('dialog').classList.remove('hidden');
+    setTimeout(function () { $('dialogOk').focus(); }, 30);
+    return new Promise(function (resolve) { dialogResolve = resolve; });
+  }
+  function closeDialog(result) {
+    $('dialog').classList.add('hidden');
+    if (dialogResolve) { dialogResolve(result); dialogResolve = null; }
+  }
+  $('dialogOk').addEventListener('click', function () { closeDialog(true); });
+  $('dialogCancel').addEventListener('click', function () { closeDialog(false); });
+  $('dialog').addEventListener('click', function (e) { if (e.target === $('dialog')) closeDialog(false); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && dialogResolve) closeDialog(false); });
+
+  /* ----------------------------- connections ----------------------------- */
   function renderPlatforms() {
     document.querySelectorAll('.platform').forEach(function (el) {
       var key = el.dataset.platform, acct = state.platforms[key];
       var input = el.querySelector('.acct'), btn = el.querySelector('.connect-btn');
-      var status = el.querySelector('.status');
       el.classList.toggle('connected', !!acct);
-      if (acct) {
-        input.value = acct; input.disabled = true;
-        btn.textContent = 'Disconnect'; btn.classList.add('ghost');
-        if (!status) { status = document.createElement('div'); status.className = 'status'; el.insertBefore(status, btn); }
-        status.textContent = '✓ Connected';
-      } else {
-        input.disabled = false;
-        btn.textContent = 'Connect'; btn.classList.remove('ghost');
-        if (status) status.remove();
-      }
+      el.querySelector('.platform-sub').textContent = acct || 'Not connected';
+      input.disabled = !!acct;
+      if (acct) input.value = acct;
+      btn.textContent = acct ? 'Disconnect' : 'Connect';
+      btn.className = 'btn connect-btn ' + (acct ? 'btn-ghost' : 'btn-secondary');
     });
     var sel = $('mPlatform'), cur = sel.value;
     sel.innerHTML = Object.keys(PLATFORMS).map(function (k) {
@@ -60,28 +84,34 @@
   }
 
   document.querySelectorAll('.platform').forEach(function (el) {
-    el.querySelector('.connect-btn').addEventListener('click', function () {
-      var key = el.dataset.platform, input = el.querySelector('.acct');
+    var input = el.querySelector('.acct');
+    function toggle() {
+      var key = el.dataset.platform;
       if (state.platforms[key]) {
         delete state.platforms[key];
+        toast(PLATFORMS[key].name + ' disconnected');
       } else {
         var v = input.value.trim();
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) { input.focus(); input.style.borderColor = 'var(--danger)'; return; }
-        input.style.borderColor = '';
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) { input.classList.add('invalid'); input.focus(); return; }
+        input.classList.remove('invalid');
         state.platforms[key] = v;
+        toast(PLATFORMS[key].name + ' connected');
       }
       save(); renderPlatforms();
-    });
+    }
+    el.querySelector('.connect-btn').addEventListener('click', toggle);
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') toggle(); });
+    input.addEventListener('input', function () { input.classList.remove('invalid'); });
   });
 
-  /* ------------------------ 2. zoope asks your names -------------------- */
+  /* ------------------------------ names chat ------------------------------ */
   var chat = $('setupChat');
-  function bot(text) { addMsg('bot', 'zoope', text); }
-  function me(text) { addMsg('me', 'You', text); }
-  function addMsg(cls, who, text) {
+  function bot(text) { addMsg('bot', text); }
+  function me(text) { addMsg('me', text); }
+  function addMsg(cls, text) {
     var d = document.createElement('div');
     d.className = 'msg ' + cls;
-    d.innerHTML = '<span class="who">' + esc(who) + '</span>' + esc(text);
+    d.innerHTML = (cls === 'bot' ? '<span class="msg-avatar">z</span>' : '') + '<div class="msg-body">' + esc(text) + '</div>';
     chat.appendChild(d);
     chat.scrollTop = chat.scrollHeight;
   }
@@ -96,8 +126,10 @@
   }
   function renderChips() {
     var p = state.profile;
-    $('nameChips').innerHTML = p.names.length ? '<span class="muted small">zoope responds to:</span> ' + p.names.map(function (n, i) {
-      return '<span class="chip">' + esc(n) + (n === p.preferred ? ' ★' : '') + ' <button data-i="' + i + '" title="Remove">×</button></span>';
+    $('nameChips').innerHTML = p.names.length ? '<span class="chips-label">Responds to</span>' + p.names.map(function (n, i) {
+      var pref = n === p.preferred;
+      return '<span class="chip' + (pref ? ' preferred' : '') + '"' + (pref ? ' title="Introduces itself with this name"' : '') + '>' +
+        (pref ? '★ ' : '') + esc(n) + '<button type="button" data-i="' + i + '" aria-label="Remove ' + esc(n) + '">×</button></span>';
     }).join('') : '';
   }
   $('nameChips').addEventListener('click', function (e) {
@@ -109,14 +141,14 @@
   });
 
   var ASK = {
-    name: function () { bot('Hi! I\'m zoope 👋 I\'ll go to meetings as you. First — what\'s your full name?'); },
+    name: function () { bot('Hi, I\'m zoope. I\'ll attend meetings as you. First, what\'s your full name?'); },
     nicknames: function () {
-      bot('Nice to meet you, ' + state.profile.fullName.split(' ')[0] + '! What names do people call you by? Include nicknames, short names or initials — separate them with commas.');
+      bot('Nice to meet you, ' + state.profile.fullName.split(' ')[0] + '. What names do people call you by? Include nicknames, short names or initials, separated by commas.');
     },
     preferred: function () { bot('Got it: ' + state.profile.names.join(', ') + '. Which one should I introduce myself with?'); },
-    more: function () { bot('Any other names people use for you — maybe a work nickname or how your family says it? Type "no" if that\'s all.'); },
+    more: function () { bot('Any other names people use for you, like a work nickname? Type "no" if that\'s all.'); },
     done: function () {
-      bot('Perfect. In meetings I\'ll answer when someone says ' + state.profile.names.join(', ') + ' and introduce myself as ' + state.profile.preferred + '. Type "change" anytime to update your names.');
+      bot('All set. I\'ll answer to ' + state.profile.names.join(', ') + ' and introduce myself as ' + state.profile.preferred + '. Type "change" to start over.');
     }
   };
 
@@ -125,7 +157,7 @@
     me(text);
     if (/^change\b/i.test(text)) {
       p.names = []; p.preferred = ''; state.chatStep = 'name';
-      save(); renderChips(); ASK.name(); return;
+      save(); renderChips(); setTimeout(ASK.name, 300); return;
     }
     if (step === 'name') {
       p.fullName = text.replace(/^(i'?m|my name is|it'?s)\s+/i, '').trim();
@@ -145,11 +177,12 @@
         state.chatStep = 'done';
       } else {
         addNames(splitNames(text));
-        bot('Added! Anything else?');
-        save(); renderChips(); return;
+        save(); renderChips();
+        setTimeout(function () { bot('Added. Anything else?'); }, 300);
+        return;
       }
     } else {
-      bot('I\'ve got your names. Type "change" to redo them, or scroll down to scan your face and voice.');
+      setTimeout(function () { bot('Your names are saved. Type "change" to redo them.'); }, 300);
       return;
     }
     save(); renderChips();
@@ -166,7 +199,6 @@
 
   function startChat() {
     if (state.chatStep === 'done') {
-      bot('Welcome back, ' + (state.profile.preferred || state.profile.fullName) + '!');
       ASK.done();
     } else {
       if (state.chatStep !== 'name' && !state.profile.fullName) state.chatStep = 'name';
@@ -174,51 +206,71 @@
     }
   }
 
-  /* ------------------------ 3. face & voice scan ------------------------ */
-  var stream = null, stopPreview = null;
+  /* ------------------------------ knowledge ------------------------------ */
+  function factCount(text) { return new ZoopeKnowledgeBase(text).sentences.length; }
+  function renderKnowledgeStatus(saved) {
+    var n = factCount(state.profile.knowledge || '');
+    $('knowledgeSaved').textContent = saved ? 'Saved · ' + n + ' fact' + (n === 1 ? '' : 's')
+      : (n ? n + ' fact' + (n === 1 ? '' : 's') + ' saved' : 'No notes yet');
+  }
+  $('knowledge').value = state.profile.knowledge || '';
+  $('knowledge').addEventListener('input', function () {
+    var dirty = $('knowledge').value.trim() !== (state.profile.knowledge || '');
+    $('knowledgeSaved').textContent = dirty ? 'Unsaved changes' : $('knowledgeSaved').textContent;
+    $('saveKnowledge').className = 'btn ' + (dirty ? 'btn-primary' : 'btn-secondary');
+  });
+  $('saveKnowledge').addEventListener('click', function () {
+    state.profile.knowledge = $('knowledge').value.trim();
+    save();
+    renderKnowledgeStatus(true);
+    $('saveKnowledge').className = 'btn btn-secondary';
+    toast('Knowledge saved');
+  });
+
+  /* ---------------------------- face + voice scan ---------------------------- */
+  var stream = null, stopPreview = null, previewLevel = 0;
   var cam = $('cam');
+
+  function setStartCamLabel(on) {
+    $('startCam').querySelector('span').textContent = on ? 'Camera & mic on' : 'Enable camera & mic';
+    $('startCam').className = 'btn ' + (on ? 'btn-secondary' : 'btn-primary');
+    $('startCam').disabled = on;
+  }
 
   function refreshAvatarBox() {
     if (stopPreview) stopPreview();
     stopPreview = null;
-    var info = [];
     if (state.face) {
       stopPreview = ZoopeAvatar.animate($('avatarCanvas'), state.face, function () { return previewLevel; });
-      info.push(state.face.kind === 'mesh' ? 'Photo-real face (478-point mesh)' : 'Cartoon face');
     } else {
       ZoopeAvatar.draw($('avatarCanvas'), null);
     }
-    if (state.voice && state.voice.ok) {
-      var sp = ZoopeVoice.synthParams(state.voice);
-      info.push('Voice: ' + state.voice.pitchHz + ' Hz, ' + state.voice.register + ' register → pitch ' + sp.pitch + ', rate ' + sp.rate);
-    }
-    $('avatarInfo').textContent = info.length ? info.join(' · ') : 'No avatar yet';
+    var mesh = state.face && state.face.kind === 'mesh';
+    $('avatarInfo').textContent = state.face ? (mesh ? 'Photo-real · 478 points' : 'Illustrated') : 'None yet';
+    $('faceBadge').textContent = state.face ? (mesh ? 'Photo-real' : 'Illustrated') : 'Not scanned';
+    $('faceBadge').className = 'pill ' + (state.face ? 'pill-green pill-dot' : '');
     $('testVoice').disabled = !state.face;
   }
-  var previewLevel = 0;
 
   $('startCam').addEventListener('click', function () {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      $('scanStatus').textContent = 'This browser cannot access the camera.'; return;
+      toast('This browser can\'t access a camera.', 'error'); return;
     }
     navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: true }).then(function (s) {
       stream = s;
       cam.srcObject = s;
       cam.play();
       $('camPlaceholder').classList.add('hidden');
-      $('scanFace').disabled = false;
-      $('recordVoice').disabled = false;
-      $('startAlphabet').disabled = false;
-      $('alphaStatus').textContent = 'Ready. Press “Start alphabet”.';
-      $('startCam').textContent = 'Camera & mic on';
-      $('startCam').disabled = true;
-      $('scanStatus').textContent = 'Put your face inside the oval, in good light.';
+      ['scanFace', 'recordVoice', 'startAlphabet'].forEach(function (id) { $(id).disabled = false; });
+      setStartCamLabel(true);
+      $('scanStatus').textContent = 'Fit your face inside the oval, in good light, then scan.';
+      renderAlphabet(null);
     }).catch(function (err) {
-      $('scanStatus').textContent = 'Could not open camera/mic: ' + err.message;
+      toast('Couldn\'t open the camera or mic: ' + err.message, 'error');
     });
   });
 
-  // Turns the camera and mic off (used when leaving the Clone page).
+  // Turns the camera and mic off (used when leaving the page).
   function stopCamera() {
     if (alphaRun) alphaRun.stop = true;
     if (!stream) return;
@@ -226,8 +278,7 @@
     stream = null;
     cam.srcObject = null;
     $('camPlaceholder').classList.remove('hidden');
-    $('startCam').disabled = false;
-    $('startCam').textContent = 'Turn on camera & mic';
+    setStartCamLabel(false);
     ['scanFace', 'recordVoice', 'startAlphabet'].forEach(function (id) { $(id).disabled = true; });
     renderAlphabet(null);
   }
@@ -236,30 +287,29 @@
     var line = $('scanLine');
     line.classList.add('on');
     $('scanFace').disabled = true;
-    $('scanStatus').textContent = 'Loading the face model (first time only)…';
+    $('scanStatus').textContent = 'Loading the face model…';
     ZoopeFaceMesh.load().then(function () {
-      $('scanStatus').textContent = 'Scanning your face… hold still and look at the camera.';
+      $('scanStatus').textContent = 'Scanning. Hold still and look at the camera.';
       return new Promise(function (res) { setTimeout(res, 400); });
     }).then(function () {
       // take a few scans and keep the one where the face fills the frame best
-      var tries = [0, 1, 2].map(function (i) {
+      return Promise.all([0, 1, 2].map(function (i) {
         return new Promise(function (res) { setTimeout(res, i * 300); }).then(function () { return ZoopeFaceMesh.scan(cam); });
-      });
-      return Promise.all(tries);
+      }));
     }).then(function (faces) {
       var best = faces.filter(Boolean).sort(function (a, b) { return b.confidence - a.confidence; })[0];
       if (!best) throw new Error('noface');
-      finishScan(best, 'Face cloned from 478 points! Now clone your voice below.');
+      finishScan(best, 'Face captured from 478 points. Next, record your voice below.');
+      toast('Face scanned');
     }).catch(function (err) {
       if (err && err.message === 'noface') {
         line.classList.remove('on');
         $('scanFace').disabled = false;
-        $('scanStatus').textContent = 'I couldn\'t find your face. Look straight at the camera, inside the oval, in good light, then try again.';
+        $('scanStatus').textContent = 'No face found. Look straight at the camera, inside the oval, in good light.';
         return;
       }
-      // face model unavailable: fall back to the cartoon avatar
-      var fallback = ZoopeAvatar.scanFace(cam);
-      finishScan(fallback, 'The face model couldn\'t load here, so I made a cartoon avatar instead.');
+      // face model unavailable: fall back to the illustrated avatar
+      finishScan(ZoopeAvatar.scanFace(cam), 'The face model couldn\'t load, so zoope made an illustrated avatar instead.');
     });
 
     function finishScan(face, msg) {
@@ -275,17 +325,17 @@
   $('recordVoice').addEventListener('click', function () {
     if (!stream) return;
     $('recordVoice').disabled = true;
-    $('scanStatus').textContent = 'Listening… read the sentence out loud.';
+    $('recordVoice').textContent = 'Listening…';
     ZoopeVoice.scanVoice(stream, 6, function (l) { $('meterFill').style.width = (l * 100) + '%'; })
       .then(function (v) {
         $('recordVoice').disabled = false;
-        if (!v.ok) { $('scanStatus').textContent = v.reason; return; }
+        $('recordVoice').textContent = 'Record 6s';
+        if (!v.ok) { toast(v.reason, 'error'); return; }
         state.voice = v;
         save();
-        refreshAvatarBox();
-        $('scanStatus').textContent = 'Voice captured! Press “Hear my AI voice”.';
+        toast('Backup voice tuned to ' + v.pitchHz + ' Hz');
       })
-      .catch(function (err) { $('recordVoice').disabled = false; $('scanStatus').textContent = err.message; });
+      .catch(function (err) { $('recordVoice').disabled = false; $('recordVoice').textContent = 'Record 6s'; toast(err.message, 'error'); });
   });
 
   $('testVoice').addEventListener('click', function () {
@@ -293,7 +343,7 @@
     speakAs('Hi everyone, ' + n + ' here. Happy to share a quick update.', function (l) { previewLevel = l; });
   });
 
-  /* ------------------------ alphabet voice clone ------------------------ */
+  /* ------------------------- alphabet voice clone ------------------------- */
   var LETTERS = ZoopeVoiceClone.LETTERS;
   var clips = loadClips(), cloneVoice = null, alphaRun = null;
 
@@ -311,18 +361,22 @@
     try { localStorage.setItem('zoope-voiceclone', JSON.stringify(raw)); return true; } catch (e) { return false; }
   }
   function hasClone() { return Object.keys(clips).length >= 20; }
-  function rebuildClone() { cloneVoice = hasClone() ? new ZoopeVoiceClone.Voice(clips) : null; }
+  function rebuildClone() { cloneVoice = hasClone() ? new ZoopeVoiceClone.Voice(clips) : null; renderChecklist(); }
 
   function renderAlphabet(current) {
     $('alphaGrid').innerHTML = LETTERS.map(function (L) {
-      return '<button data-letter="' + L + '" class="' + (clips[L] ? 'done' : '') + (L === current ? ' current' : '') + '">' + L + '</button>';
+      var cls = (clips[L] ? 'done' : '') + (L === current ? ' current' : '');
+      return '<button type="button" data-letter="' + L + '" class="' + cls + '" aria-label="Letter ' + L + (clips[L] ? ', recorded' : '') + '">' + L + '</button>';
     }).join('');
     var n = Object.keys(clips).length;
+    $('voiceBadge').textContent = n + ' / 26';
+    $('voiceBadge').className = 'pill ' + (n === 26 ? 'pill-green pill-dot' : hasClone() ? 'pill-accent' : '');
     $('testClone').disabled = !hasClone();
     if (!alphaRun) {
+      $('startAlphabet').lastChild.textContent = n && n < 26 ? 'Continue alphabet' : n === 26 ? 'Record again' : 'Record alphabet';
       $('alphaStatus').textContent = n === 26 ? 'All 26 letters recorded. Your cloned voice is ready.'
-        : n ? n + ' of 26 letters recorded' + (hasClone() ? '. Enough to speak, but more letters sound better.' : '. Record at least 20 to use your cloned voice.')
-        : (stream ? 'Ready. Press “Start alphabet”.' : 'Turn on the camera & mic above to start.');
+        : n ? n + ' of 26 letters recorded. ' + (hasClone() ? 'Enough to speak; more letters sound better.' : 'Record at least 20 to use your cloned voice.')
+        : (stream ? 'Ready when you are.' : 'Enable the camera & mic to start.');
     }
   }
 
@@ -338,29 +392,30 @@
       $('bigLetter').textContent = L;
       $('bigLetter').classList.add('listening');
       renderAlphabet(L);
-      $('alphaStatus').textContent = 'Say “' + L + '” now…';
+      $('alphaStatus').textContent = 'Say “' + L + '” now.';
       ZoopeVoiceClone.recordLetter(stream, function (l) { $('meterFill').style.width = (l * 100) + '%'; }).then(function (clip) {
         $('bigLetter').classList.remove('listening');
         if (run.stop) return end();
         if (!clip || clip.length < ZoopeVoiceClone.RATE * 0.15) {
-          $('alphaStatus').textContent = 'I didn\'t catch “' + L + '”. Let\'s try again.';
+          $('alphaStatus').textContent = 'Didn\'t catch “' + L + '”. Trying again.';
           return setTimeout(next, 900);
         }
         clips[L] = clip;
         i++;
         setTimeout(next, 250);
-      }).catch(function (err) { $('alphaStatus').textContent = err.message; end(); });
+      }).catch(function (err) { toast(err.message, 'error'); end(); });
     })();
 
     function end() {
       $('bigLetter').classList.remove('listening');
       alphaRun = null;
-      $('startAlphabet').disabled = false;
+      $('startAlphabet').disabled = !stream;
       $('stopAlphabet').disabled = true;
       var stored = saveClips();
       rebuildClone();
       renderAlphabet(null);
-      if (!stored) $('alphaStatus').textContent += ' (Browser storage is full, so the recording only lasts until you close this page.)';
+      if (!stored) toast('Browser storage is full, so the recording lasts only until you close this tab.', 'error');
+      else if (hasClone()) toast('Voice clone updated');
     }
   }
 
@@ -389,40 +444,92 @@
     return ZoopeVoice.speak(text, state.voice, onLevel);
   }
 
-  /* ---------------------------- 4. knowledge ---------------------------- */
-  $('knowledge').value = state.profile.knowledge || '';
-  $('saveKnowledge').addEventListener('click', function () {
-    state.profile.knowledge = $('knowledge').value.trim();
-    save();
-    var n = new ZoopeKnowledgeBase(state.profile.knowledge).sentences.length;
-    $('knowledgeSaved').textContent = 'Saved — zoope learned ' + n + ' fact' + (n === 1 ? '' : 's') + '.';
-  });
+  /* ------------------------------ checklist ------------------------------ */
+  function checklistItems() {
+    return [
+      { label: 'Connect a meeting app', done: Object.keys(state.platforms).length > 0, route: 'setup' },
+      { label: 'Add your names', done: state.profile.names.length > 0 && state.chatStep === 'done', route: 'setup' },
+      { label: 'Write knowledge', done: !!state.profile.knowledge, route: 'setup' },
+      { label: 'Scan your face', done: !!state.face, route: 'clone' },
+      { label: 'Clone your voice', done: hasClone(), route: 'clone' },
+      { label: 'Confirm a meeting', done: state.meetings.some(function (m) { return m.confirmed; }), route: 'meetings' }
+    ];
+  }
+  function renderChecklist() {
+    if (typeof clips === 'undefined') return; // called during start-up before the voice bank loads
+    var items = checklistItems(), done = items.filter(function (i) { return i.done; }).length;
+    $('checklistCount').textContent = done + '/' + items.length;
+    $('checklistBar').style.width = (done / items.length * 100) + '%';
+    $('checklistItems').innerHTML = items.map(function (i) {
+      return '<li class="' + (i.done ? 'done' : '') + '"><a href="#/' + i.route + '">' + esc(i.label) + '</a></li>';
+    }).join('');
+    $('checklist').classList.toggle('hidden', done === items.length);
+    document.querySelector('[data-state="setup"]').classList.toggle('done', items[0].done && items[1].done && items[2].done);
+    document.querySelector('[data-state="clone"]').classList.toggle('done', items[3].done && items[4].done);
+    var upcoming = state.meetings.filter(function (m) { return new Date(m.time).getTime() > Date.now() - 15 * 60 * 1000; }).length;
+    $('navMeetingCount').textContent = upcoming || '';
+  }
 
-  /* ----------------------------- 5. meetings ---------------------------- */
+  /* ------------------------------ meetings ------------------------------ */
+  function fmtDate(t) {
+    var d = new Date(t);
+    if (isNaN(d)) return { day: t, time: '' };
+    return {
+      day: d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }),
+      time: d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+    };
+  }
+
   function renderMeetings() {
     var list = $('meetingList');
-    if (!state.meetings.length) { list.innerHTML = '<div class="empty">No meetings yet. Add one above.</div>'; return; }
+    if (!state.meetings.length) {
+      list.innerHTML = '<div class="empty"><div class="empty-icon">' + icon('calendar') + '</div>' +
+        '<h3>No meetings yet</h3><p>Add a meeting from a connected app. zoope joins only after you confirm it.</p>' +
+        '<button type="button" class="btn btn-secondary" data-act="new">' + icon('plus') + 'New meeting</button></div>';
+      renderChecklist();
+      return;
+    }
     list.innerHTML = state.meetings.slice().sort(function (a, b) { return a.time.localeCompare(b.time); }).map(function (m) {
-      var p = PLATFORMS[m.platform];
+      var p = PLATFORMS[m.platform], when = fmtDate(m.time);
+      var status = m.confirmed ? '<span class="pill pill-green pill-dot">Confirmed</span>' : '<span class="pill pill-amber pill-dot">Needs approval</span>';
       return '<div class="meeting" data-id="' + m.id + '">' +
-        '<img src="' + p.img + '" alt="' + p.name + '">' +
-        '<div class="info"><b>' + esc(m.title) + '</b><span class="muted small">' + p.name + ' · ' +
-          esc(new Date(m.time).toLocaleString()) + (m.people.length ? ' · with ' + esc(m.people.join(', ')) : '') + '</span></div>' +
-        '<span class="badge ' + (m.confirmed ? 'confirmed' : 'pending') + '">' + (m.confirmed ? 'zoope will attend' : 'Needs your OK') + '</span>' +
-        '<div class="actions">' +
+        '<div class="m-title"><img src="' + p.img + '" alt="' + p.name + '"><div><b>' + esc(m.title) + '</b><span>' +
+          (m.people.length ? 'With ' + esc(m.people.join(', ')) : p.name) + '</span></div></div>' +
+        '<div class="m-when"><b>' + esc(when.day) + '</b><span>' + esc(when.time) + '</span></div>' +
+        '<div>' + status + '</div>' +
+        '<div class="m-actions">' +
           (m.confirmed
-            ? '<button class="btn" data-act="join">Join now</button><button class="btn ghost" data-act="unconfirm">Cancel</button>'
-            : '<button class="btn ok" data-act="confirm">Confirm</button>') +
-          (m.link ? '<a class="btn ghost" href="' + esc(m.link) + '" target="_blank" rel="noopener">Open link</a>' : '') +
-          '<button class="btn ghost" data-act="delete" title="Delete">🗑</button>' +
+            ? '<button type="button" class="btn btn-primary btn-sm" data-act="join">Join now</button><button type="button" class="btn btn-ghost btn-sm" data-act="unconfirm">Revoke</button>'
+            : '<button type="button" class="btn btn-secondary btn-sm" data-act="confirm">Approve</button>') +
+          (m.link ? '<a class="btn btn-ghost btn-sm btn-icon" href="' + esc(m.link) + '" target="_blank" rel="noopener" title="Open link" aria-label="Open meeting link">' + icon('external') + '</a>' : '') +
+          '<button type="button" class="btn btn-ghost btn-sm btn-icon" data-act="delete" title="Delete" aria-label="Delete meeting">' + icon('trash') + '</button>' +
         '</div></div>';
     }).join('');
+    renderChecklist();
   }
+
+  function openMeetingForm(open) {
+    $('meetingFormPanel').classList.toggle('hidden', !open);
+    $('meetingError').textContent = '';
+    if (open) {
+      renderPlatforms();
+      if (!$('mTime').value) {
+        var d = new Date(Date.now() + 60 * 60 * 1000); d.setMinutes(0, 0, 0);
+        $('mTime').value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      }
+      setTimeout(function () { $('mTitle').focus(); }, 30);
+    }
+  }
+  $('newMeetingBtn').addEventListener('click', function () { openMeetingForm(true); });
+  $('cancelMeeting').addEventListener('click', function () { openMeetingForm(false); });
 
   $('meetingForm').addEventListener('submit', function (e) {
     e.preventDefault();
     var platform = $('mPlatform').value;
-    if (!state.platforms[platform]) { alert('Connect ' + PLATFORMS[platform].name + ' first on the Setup page.'); return; }
+    if (!state.platforms[platform]) {
+      $('meetingError').innerHTML = 'Connect ' + PLATFORMS[platform].name + ' first in <a href="#/setup"><u>Setup</u></a>.';
+      return;
+    }
     var link = $('mLink').value.trim();
     if (link && !/^https?:\/\//i.test(link)) link = 'https://' + link;
     state.meetings.push({
@@ -436,51 +543,66 @@
       joined: false
     });
     save(); renderMeetings();
-    e.target.reset(); renderPlatforms();
+    e.target.reset();
+    openMeetingForm(false);
+    toast('Meeting added. Approve it to let zoope attend.');
   });
 
   $('meetingList').addEventListener('click', function (e) {
-    var act = e.target.dataset.act;
-    if (!act) return;
-    var id = e.target.closest('.meeting').dataset.id;
+    var btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    var act = btn.dataset.act;
+    if (act === 'new') { openMeetingForm(true); return; }
+    var id = btn.closest('.meeting').dataset.id;
     var m = state.meetings.filter(function (x) { return x.id === id; })[0];
     if (!m) return;
     if (act === 'confirm') {
       var missing = readinessProblems();
-      var msg = 'Send your zoope avatar to “' + m.title + '” on ' + PLATFORMS[m.platform].name + '?\n\n' +
-        'It will speak as ' + (state.profile.preferred || 'you') + ' using your avatar and voice.' +
-        (missing.length ? '\n\nHeads up: ' + missing.join('; ') + '.' : '');
-      if (confirm(msg)) { m.confirmed = true; m.joined = false; }
-    } else if (act === 'unconfirm') {
-      m.confirmed = false;
-    } else if (act === 'delete') {
-      if (confirm('Delete “' + m.title + '”?')) state.meetings = state.meetings.filter(function (x) { return x.id !== id; });
-    } else if (act === 'join') {
-      joinMeeting(m);
+      confirmDialog({
+        title: 'Send zoope to “' + m.title + '”?',
+        body: 'zoope will join on ' + PLATFORMS[m.platform].name + ' at ' + esc(fmtDate(m.time).time || 'the start time') +
+          ' and speak as <b>' + esc(state.profile.preferred || 'you') + '</b> with your avatar and voice.' +
+          (missing.length ? '<div class="dialog-note">Not ready yet: ' + esc(missing.join('; ')) + '.</div>' : ''),
+        ok: 'Approve'
+      }).then(function (ok) {
+        if (!ok) return;
+        m.confirmed = true; m.joined = false;
+        save(); renderMeetings(); toast('zoope will attend “' + m.title + '”');
+      });
+      return;
     }
+    if (act === 'delete') {
+      confirmDialog({ title: 'Delete “' + m.title + '”?', body: 'This removes the meeting from zoope. It can\'t be undone.', ok: 'Delete', danger: true })
+        .then(function (ok) {
+          if (!ok) return;
+          state.meetings = state.meetings.filter(function (x) { return x.id !== id; });
+          save(); renderMeetings();
+        });
+      return;
+    }
+    if (act === 'unconfirm') { m.confirmed = false; toast('Approval revoked'); }
+    if (act === 'join') joinMeeting(m);
     save(); renderMeetings();
   });
 
   function readinessProblems() {
     var out = [];
-    if (!state.profile.names.length) out.push('you haven\'t told zoope your names yet');
-    if (!state.face) out.push('your face hasn\'t been scanned');
-    if (!state.voice && !hasClone()) out.push('your voice hasn\'t been recorded');
+    if (!state.profile.names.length) out.push('add your names');
+    if (!state.face) out.push('scan your face');
+    if (!state.voice && !hasClone()) out.push('record your voice');
     return out;
   }
 
-  // Auto-join confirmed meetings when their time comes (while this page is open).
+  // Auto-join confirmed meetings when their time comes (while zoope is open).
   setInterval(function () {
     var now = Date.now();
     state.meetings.forEach(function (m) {
       var t = new Date(m.time).getTime();
-      if (m.confirmed && !m.joined && now >= t && now - t < 15 * 60 * 1000 && !room) {
-        joinMeeting(m);
-      }
+      if (m.confirmed && !m.joined && now >= t && now - t < 15 * 60 * 1000 && !room) joinMeeting(m);
     });
   }, 15000);
 
-  /* ---------------------------- meeting room ---------------------------- */
+  /* ------------------------------ meeting room ------------------------------ */
   var room = null;
   var COLORS = ['#e5484d', '#f76b15', '#12a594', '#8e4ec6', '#0090ff', '#d6409f', '#46a758'];
 
@@ -500,7 +622,8 @@
       level: 0,
       queue: Promise.resolve(),
       listener: null,
-      demoTimer: null
+      demoTimer: null,
+      started: Date.now()
     };
 
     // the room lives on the Demo page for the demo, and on the Meetings page otherwise
@@ -511,7 +634,14 @@
     $('demoBtn').classList.toggle('hidden', !m.demo);
     $('room').classList.remove('hidden');
     $('summary').classList.add('hidden');
-    $('roomTitle').textContent = m.title + ' — ' + PLATFORMS[m.platform].name;
+    $('roomTitle').textContent = m.title;
+    $('roomPlatform').textContent = PLATFORMS[m.platform].name;
+    $('roomTimer').textContent = '00:00';
+    room.timer = setInterval(function () {
+      var s = Math.floor((Date.now() - room.started) / 1000);
+      $('roomTimer').textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+    }, 1000);
+
     var stage = $('stage');
     stage.className = 'stage ' + m.platform;
     stage.querySelectorAll('.tile.other').forEach(function (t) { t.remove(); });
@@ -522,15 +652,15 @@
       t.innerHTML = '<div class="initials" style="background:' + COLORS[i % COLORS.length] + '">' + esc(p.charAt(0).toUpperCase()) + '</div><div class="tile-name">' + esc(p) + '</div>';
       stage.appendChild(t);
     });
-    $('roomAvatarName').textContent = (profile.preferred || 'You') + ' (zoope)';
+    $('roomAvatarName').textContent = (profile.preferred || 'You') + ' · zoope';
     $('speaker').innerHTML = people.map(function (p) { return '<option>' + esc(p) + '</option>'; }).join('');
     $('transcript').innerHTML = '';
     $('decisionLog').innerHTML = '';
     room.stopAnim = ZoopeAvatar.animate($('roomAvatar'), state.face, function () { return room ? room.level : 0; });
 
-    sys('zoope joined as ' + (profile.preferred || 'you') + '. (Meeting room preview — audio from the room comes from the box below or the 🎤 button.)');
+    sys('Joined as ' + (profile.preferred || 'you') + '. Type what people say below, or use Listen.');
     var problems = readinessProblems();
-    if (problems.length) sys('Heads up: ' + problems.join('; ') + '.');
+    if (problems.length) sys('Not ready yet: ' + problems.join('; ') + '.');
     aiSay(room.engine.greetOnJoin());
     if (currentRoute !== room.page) navigate(room.page);
     else setTimeout(function () { $('room').scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 50);
@@ -540,7 +670,7 @@
   function line(cls, who, text) {
     var d = document.createElement('div');
     d.className = 'line ' + (cls || '');
-    d.innerHTML = who ? '<b>' + esc(who) + ':</b> ' + esc(text) : esc(text);
+    d.innerHTML = who ? '<span class="line-who">' + esc(who) + '</span><span class="line-text">' + esc(text) + '</span>' : esc(text);
     $('transcript').appendChild(d);
     $('transcript').scrollTop = $('transcript').scrollHeight;
   }
@@ -557,7 +687,7 @@
       if (room !== r) return;
       return new Promise(function (res) { setTimeout(res, 600); }).then(function () { // natural pause before speaking
         if (room !== r) return;
-        line('ai', r.engine.preferred + ' (zoope)', text);
+        line('ai', r.engine.preferred + ' · zoope', text);
         highlight(null, true);
         return speakAs(text, function (l) { r.level = l; });
       }).then(function () { highlight(null, false); r.level = 0; });
@@ -577,10 +707,12 @@
 
   function logDecision(d) {
     var el = document.createElement('div');
-    el.className = 'decision' + (d.speak ? ' speak' : '');
-    el.innerHTML = '<div><b>' + esc(d.speaker) + '</b>: “' + esc(d.text) + '”</div>' +
-      '<div>Intent: ' + esc(d.intent) + ' · <span class="score">score ' + d.score.toFixed(2) + '</span> → ' + (d.speak ? '<b>respond</b>' : 'stay quiet') + '</div>' +
-      '<div class="muted">' + d.reasons.map(esc).join(' · ') + '</div>';
+    el.className = 'decision';
+    var pct = Math.max(0, Math.min(1, d.score / 1.5)) * 100;
+    el.innerHTML = '<span class="pill ' + (d.speak ? 'pill-accent' : '') + '">' + (d.speak ? 'Respond' : 'Quiet') + '</span>' +
+      '<div><div class="decision-text"><b>' + esc(d.speaker) + '</b>' + esc(d.text) + '</div>' +
+      '<div class="decision-why">' + esc(d.intent) + ' · ' + d.reasons.map(esc).join(' · ') + '</div></div>' +
+      '<span class="score"><i style="--w:' + pct.toFixed(0) + '%"></i><em>' + d.score.toFixed(2).replace('-', '−') + '</em></span>';
     $('decisionLog').prepend(el);
   }
 
@@ -592,15 +724,16 @@
     hear($('speaker').value, v);
   });
 
+  function setListenLabel(on) { $('listenBtn').querySelector('span').textContent = on ? 'Stop listening' : 'Listen'; }
   $('listenBtn').addEventListener('click', function () {
     if (!room) return;
-    if (room.listener) { room.listener.stop(); room.listener = null; $('listenBtn').textContent = '🎤 Listen to room'; return; }
+    if (room.listener) { room.listener.stop(); room.listener = null; setListenLabel(false); return; }
     var who = room.people[0];
     room.listener = ZoopeVoice.listen(function (text) {
       if (window.speechSynthesis && speechSynthesis.speaking) return; // don't hear ourselves
       hear($('speaker').value || who, text);
-    }, function (on) { $('listenBtn').textContent = on ? '⏹ Stop listening' : '🎤 Listen to room'; if (!on && room) room.listener = null; });
-    if (!room.listener) sys('Live listening needs a browser with speech recognition (e.g. Chrome or Edge). You can still type what people say.');
+    }, function (on) { setListenLabel(on); if (!on && room) room.listener = null; });
+    if (!room.listener) toast('Live listening needs speech recognition (Chrome or Edge). You can still type lines.', 'error');
   });
 
   $('demoBtn').addEventListener('click', startDemo);
@@ -610,11 +743,12 @@
     var demoMeeting = room ? room.meeting : null;
     var people = ['Sam', 'Priya', 'Jordan'];
     if (!demoMeeting || !demoMeeting.demo) {
-      demoMeeting = { id: 'demo', demo: true, title: 'Weekly sync (demo)', platform: Object.keys(state.platforms)[0] || 'zoom', people: people, time: new Date().toISOString() };
+      demoMeeting = { id: 'demo', demo: true, title: 'Weekly sync', platform: Object.keys(state.platforms)[0] || 'zoom', people: people, time: new Date().toISOString() };
     }
     joinMeeting(demoMeeting, { sampleKnowledge: true });
     $('demoIntro').classList.add('hidden');
-    if (!state.profile.knowledge) sys('No knowledge saved yet — using sample notes for this demo.');
+    $('demoBtnTop').classList.add('hidden');
+    if (!state.profile.knowledge) sys('No knowledge saved, so this demo uses sample notes.');
     var me = room.engine.preferred;
     var script = [
       ['Sam', 'Hi everyone! Can everyone hear me okay?'],
@@ -647,28 +781,40 @@
     room = null;
     if (r.listener) r.listener.stop();
     clearTimeout(r.demoTimer);
+    clearInterval(r.timer);
     if (r.stopAnim) r.stopAnim();
     if (window.speechSynthesis) speechSynthesis.cancel();
-    $('listenBtn').textContent = '🎤 Listen to room';
+    setListenLabel(false);
     $('room').classList.add('hidden');
-    if (r.page === 'demo') { $('demoIntro').classList.remove('hidden'); $('demoBtnTop').innerHTML = '&#9654; Run the demo again'; }
+    if (r.page === 'demo') {
+      $('demoIntro').classList.remove('hidden');
+      $('demoBtnTop').classList.remove('hidden');
+      $('demoBtnTop').querySelector('span').textContent = 'Run again';
+    }
     if (showSummary) renderSummary(r);
     else $('summary').classList.add('hidden');
   }
 
   function renderSummary(r) {
     var s = r.engine.summary();
-    var list = function (items, fmt) { return items.length ? '<ul>' + items.map(fmt).join('') + '</ul>' : '<p class="muted">None</p>'; };
-    var html = '<p><b>' + esc(r.meeting.title) + '</b> · ' + s.turns + ' lines · zoope spoke ' + s.spoke + ' time(s) and stayed quiet ' + s.stayedQuiet + ' time(s).</p>' +
-      '<h3>Topics</h3><p>' + (s.topics.length ? s.topics.map(esc).join(', ') : '—') + '</p>' +
-      '<h3>Action items for you</h3>' + list(s.actionItems, function (a) { return '<li>' + esc(a.text) + ' <span class="muted">— from ' + esc(a.from) + (a.due ? ', ' + esc(a.due) : '') + '</span></li>'; }) +
-      '<h3>Questions zoope promised to follow up on</h3>' + list(s.followUps, function (f) { return '<li>' + esc(f.text) + ' <span class="muted">— ' + esc(f.from) + '</span></li>'; });
-    if (s.unknownNames.length) {
-      html += '<h3>Is this you?</h3><p>Someone in the meeting was called ' + s.unknownNames.map(function (n) { return '“' + esc(n) + '”'; }).join(', ') +
-        '. Do people call you that?</p>' + s.unknownNames.map(function (n) {
-          return '<button class="btn ghost" data-addname="' + esc(n) + '">Yes, add “' + esc(n) + '” to my names</button> ';
-        }).join('');
+    function section(title, items, fmt) {
+      return '<div class="summary-section"><h3>' + title + '</h3>' +
+        (items.length ? '<ul>' + items.map(fmt).join('') + '</ul>' : '<p class="summary-empty">None</p>') + '</div>';
     }
+    var html = '<dl class="summary-stats">' +
+      '<div><dt>Lines</dt><dd>' + s.turns + '</dd></div>' +
+      '<div><dt>zoope replied</dt><dd>' + s.spoke + '</dd></div>' +
+      '<div><dt>Stayed quiet</dt><dd>' + s.stayedQuiet + '</dd></div>' +
+      '<div><dt>Action items</dt><dd>' + s.actionItems.length + '</dd></div></dl>';
+    if (s.unknownNames.length) {
+      html += s.unknownNames.map(function (n) {
+        return '<div class="summary-section name-ask"><p>Someone was called <b>“' + esc(n) + '”</b>. Do people call you that?</p>' +
+          '<button type="button" class="btn btn-secondary btn-sm" data-addname="' + esc(n) + '">Add to my names</button></div>';
+      }).join('');
+    }
+    html += section('Action items', s.actionItems, function (a) { return '<li><div>' + esc(a.text) + ' <span>· ' + esc(a.from) + (a.due ? ', ' + esc(a.due) : '') + '</span></div></li>'; }) +
+      section('Follow-ups zoope promised', s.followUps, function (f) { return '<li><div>' + esc(f.text) + ' <span>· ' + esc(f.from) + '</span></div></li>'; }) +
+      '<div class="summary-section"><h3>Topics</h3>' + (s.topics.length ? '<div class="topic-row">' + s.topics.map(function (t) { return '<span class="pill">' + esc(t) + '</span>'; }).join('') + '</div>' : '<p class="summary-empty">None</p>') + '</div>';
     $('summaryBody').innerHTML = html;
     $('summary').classList.remove('hidden');
     $('summary').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -678,12 +824,14 @@
     var n = e.target.dataset.addname;
     if (!n) return;
     addNames([n]); save(); renderChips();
-    e.target.disabled = true; e.target.textContent = '✓ Added “' + n + '”';
-    bot('Thanks! I\'ll also answer to “' + n + '” from now on.');
+    e.target.disabled = true; e.target.textContent = 'Added';
+    bot('Thanks. I\'ll also answer to “' + n + '” from now on.');
+    toast('“' + n + '” added to your names');
   });
 
-  /* ------------------------------- pages -------------------------------- */
+  /* ------------------------------- routing ------------------------------- */
   var ROUTES = ['home', 'setup', 'clone', 'demo', 'meetings'];
+  var TITLES = { home: 'zoope', setup: 'Setup', clone: 'Face & voice', demo: 'Demo meeting', meetings: 'Meetings' };
   var currentRoute = null, navToken = 0;
   var reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -693,22 +841,27 @@
   }
 
   function navigate(route) {
-    if (location.hash !== '#/' + (route === 'home' ? '' : route)) location.hash = '#/' + (route === 'home' ? '' : route);
+    var hash = '#/' + (route === 'home' ? '' : route);
+    if (location.hash !== hash) location.hash = hash;
     else go(route);
   }
 
   function showPage(route) {
-    document.querySelectorAll('.page').forEach(function (pg) {
-      var on = pg.dataset.page === route;
-      pg.classList.toggle('active', on);
-      if (on) pg.querySelectorAll('.reveal').forEach(function (el, i) { el.style.setProperty('--i', Math.min(i, 10)); });
+    document.querySelectorAll('.page').forEach(function (pg) { pg.classList.toggle('active', pg.dataset.page === route); });
+    document.querySelectorAll('.side-nav a').forEach(function (a) {
+      var on = a.dataset.route === route;
+      a.classList.toggle('active', on);
+      if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     });
-    document.querySelectorAll('.topbar nav a').forEach(function (a) { a.classList.toggle('active', a.dataset.route === route); });
     document.body.dataset.route = route;
+    $('crumbCurrent').textContent = TITLES[route];
+    document.title = route === 'home' ? 'zoope · Your AI meeting stand-in' : TITLES[route] + ' · zoope';
+    if (route === 'demo') {
+      var live = !!(room && room.page === 'demo');
+      $('demoIntro').classList.toggle('hidden', live);
+      $('demoBtnTop').classList.toggle('hidden', live);
+    }
     window.scrollTo(0, 0);
-    if (route === 'demo') $('demoIntro').classList.toggle('hidden', !!(room && room.page === 'demo'));
-    var title = { home: 'zoope', setup: 'Setup · zoope', clone: 'Clone · zoope', demo: 'Demo meeting · zoope', meetings: 'Meetings · zoope' };
-    document.title = title[route];
   }
 
   function go(route, instant) {
@@ -717,24 +870,52 @@
     currentRoute = route;
     if (prev === 'clone') stopCamera();
     if (room && room.page === prev) leaveRoom(false);
-    var token = ++navToken, curtain = $('curtain');
-    if (instant || reduceMotion) { showPage(route); return; }
-    // curtain wipe: sweep up to cover, swap the page, sweep away upward
-    curtain.className = 'curtain cover';
+    var token = ++navToken;
+    // app to app: the sidebar stays put and only the content fades in (CSS).
+    // site to app (or back): cross-fade the whole shell.
+    var crossing = prev && ((prev === 'home') !== (route === 'home'));
+    if (instant || reduceMotion || !crossing) { showPage(route); return; }
+    document.body.classList.add('leaving');
     setTimeout(function () {
       if (token !== navToken) return;
       showPage(route);
-      curtain.className = 'curtain reveal-out';
-      setTimeout(function () { if (token === navToken) curtain.className = 'curtain'; }, 650);
-    }, 520);
+      document.body.classList.remove('leaving');
+    }, 170);
   }
 
   window.addEventListener('hashchange', function () { go(routeFromHash()); });
 
-  /* ------------------------------- init -------------------------------- */
+  /* ----------------------------- marketing site ----------------------------- */
+  document.querySelectorAll('[data-scroll]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var t = $(b.dataset.scroll);
+      if (t) window.scrollTo({ top: t.getBoundingClientRect().top + window.scrollY - 64, behavior: reduceMotion ? 'auto' : 'smooth' });
+    });
+  });
+  window.addEventListener('scroll', function () {
+    $('siteHeader').classList.toggle('scrolled', window.scrollY > 8);
+  }, { passive: true });
+
+  // reveal marketing sections as they scroll into view
+  var revealTargets = document.querySelectorAll('.section-head, .steps li, .split > *, .feature-grid article, .stat-grid, .cta-inner');
+  if ('IntersectionObserver' in window && !reduceMotion) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); }
+      });
+    }, { rootMargin: '0px 0px -8% 0px' });
+    revealTargets.forEach(function (el, i) {
+      el.classList.add('reveal');
+      el.style.transitionDelay = (i % 3) * 60 + 'ms';
+      io.observe(el);
+    });
+  }
+
+  /* -------------------------------- init -------------------------------- */
   renderPlatforms();
   renderChips();
   startChat();
+  renderKnowledgeStatus(false);
   refreshAvatarBox();
   rebuildClone();
   renderAlphabet(null);

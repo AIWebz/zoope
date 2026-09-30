@@ -6,7 +6,12 @@ The whole AI engine runs in the browser scripts. It uses no APIs and no servers,
 
 ## Run it
 
-The site has five pages, each with its own link: Landing (`#/`), Setup (`#/setup`), Clone (`#/clone`), Demo (`#/demo`) and Meetings (`#/meetings`). A blue curtain wipe plays when you switch pages.
+The site has two parts:
+
+- **Marketing site** (`#/`): the landing page, with the meeting-grid hero, how it works, judgement, features and privacy.
+- **App** (`#/setup`, `#/clone`, `#/demo`, `#/meetings`): a sidebar layout with a getting-started checklist, in-app dialogs and toasts.
+
+The design system lives in `css/style.css`. It uses neutral zinc tones with one blue accent, 1px borders, and the Geist and Geist Mono typefaces bundled in `vendor/fonts`. The brand wordmark stays in bold Arial.
 
 Open `index.html` through any static server, for example `python3 -m http.server`. Then go to http://localhost:8000. The camera and mic only work on `localhost` or over HTTPS.
 

@@ -4,277 +4,499 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>zoope</title>
-  <meta name="description" content="zoope — your AI avatar that attends Zoom, Google Meet and Microsoft Teams meetings for you.">
+  <meta name="description" content="zoope is an AI stand-in that attends Zoom, Google Meet and Microsoft Teams meetings for you, with your face and your voice. Runs entirely on your device.">
+  <meta name="theme-color" content="#ffffff">
+  <link rel="preload" href="vendor/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="topbar-inner">
-      <a href="#/" class="brand">zoope</a>
-      <nav>
-        <a href="#/setup" data-route="setup">Setup</a>
-        <a href="#/clone" data-route="clone">Clone</a>
-        <a href="#/demo" data-route="demo">Demo</a>
-        <a href="#/meetings" data-route="meetings">Meetings</a>
-      </nav>
-      <a href="#/setup" class="btn small nav-cta">Get started</a>
-    </div>
-  </header>
+  <!-- Shared SVG icons -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></symbol>
+      <symbol id="i-scan" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="10" r="3"/><path d="M7 18c1-2 3-3 5-3s4 1 5 3"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></symbol>
+      <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></symbol>
+      <symbol id="i-video" viewBox="0 0 24 24"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10 6-4v12l-6-4"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+      <symbol id="i-wave" viewBox="0 0 24 24"><path d="M2 12h2M6 8v8M10 5v14M14 8v8M18 10v4M22 12h0"/></symbol>
+      <symbol id="i-brain" viewBox="0 0 24 24"><path d="M12 5a3 3 0 0 0-5.8-1A3 3 0 0 0 4 9a3 3 0 0 0 0 6 3 3 0 0 0 3 4 3 3 0 0 0 5 1zM12 5a3 3 0 0 1 5.8-1A3 3 0 0 1 20 9a3 3 0 0 1 0 6 3 3 0 0 1-3 4 3 3 0 0 1-5 1z"/></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h12M9 12h12M9 18h12M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+      <symbol id="i-tag" viewBox="0 0 24 24"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></symbol>
+      <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4zM15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/></symbol>
+    </defs>
+  </svg>
 
-  <div class="curtain" id="curtain" aria-hidden="true"><span>zoope</span></div>
+  <!-- ============================== Marketing site ============================== -->
+  <div class="site page" data-page="home">
+    <header class="site-header" id="siteHeader">
+      <div class="wrap site-header-inner">
+        <a href="#/" class="wordmark">zoope</a>
+        <nav class="site-nav" aria-label="Sections">
+          <button type="button" data-scroll="how">How it works</button>
+          <button type="button" data-scroll="judgement">Judgement</button>
+          <button type="button" data-scroll="features">Features</button>
+          <button type="button" data-scroll="privacy">Privacy</button>
+        </nav>
+        <div class="site-header-actions">
+          <a href="#/demo" class="btn btn-ghost hide-sm">Watch demo</a>
+          <a href="#/setup" class="btn btn-primary">Open app</a>
+        </div>
+      </div>
+    </header>
 
-  <main id="app">
-    <!-- ============================ Landing ============================ -->
-    <section class="page page-home" data-page="home">
-      <div class="hero-bg" aria-hidden="true"></div>
-      <div class="home-grid">
-        <div class="home-copy">
-          <span class="eyebrow reveal">AI meeting avatar</span>
-          <h1 class="logo reveal">zoope</h1>
-          <p class="tagline reveal">Your AI avatar attends Zoom, Google Meet and Teams meetings for you, with your face, your voice, and good judgement about when to speak.</p>
-          <div class="hero-actions reveal">
-            <a href="#/setup" class="btn big">Get started</a>
-            <a href="#/demo" class="btn big outline">Watch a demo</a>
+    <section class="hero">
+      <div class="hero-media" aria-hidden="true"></div>
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <a href="#/clone" class="announce enter" style="--d:0">
+            <span class="announce-tag">New</span>
+            Voice cloning from 26 letters
+            <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg>
+          </a>
+          <h1 class="hero-wordmark enter" style="--d:1">zoope</h1>
+          <p class="hero-lede enter" style="--d:2">The AI stand-in that attends your Zoom, Google Meet and Teams calls, with your face, your voice, and the judgement to know when to speak.</p>
+          <div class="hero-actions enter" style="--d:3">
+            <a href="#/setup" class="btn btn-primary btn-lg">Get started <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+            <a href="#/demo" class="btn btn-secondary btn-lg"><svg class="icon icon-fill" aria-hidden="true"><use href="#i-play"/></svg> Watch the demo</a>
           </div>
-          <ul class="trust reveal">
-            <li>Runs 100% in your browser</li>
-            <li>No APIs, no servers</li>
-            <li>Joins only when you confirm</li>
+          <dl class="hero-meta enter" style="--d:4">
+            <div><dt>Processing</dt><dd>100% on-device</dd></div>
+            <div><dt>External APIs</dt><dd>None</dd></div>
+            <div><dt>Joins</dt><dd>Only when you confirm</dd></div>
+          </dl>
+        </div>
+
+        <div class="hero-orbit enter" style="--d:2" aria-hidden="true">
+          <div class="orbit">
+            <div class="orbit-ring orbit-ring-outer"></div>
+            <div class="orbit-ring orbit-ring-inner"></div>
+            <div class="orbit-track">
+              <div class="orbit-item o1"><img src="assets/zoom.jpg" alt=""></div>
+              <div class="orbit-item o2"><img src="assets/meet.png" alt=""></div>
+              <div class="orbit-item o3"><img src="assets/teams.webp" alt=""></div>
+            </div>
+            <div class="orbit-core"><span>z</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="band band-logos">
+      <div class="wrap logos-row">
+        <span class="eyebrow">Works with</span>
+        <span class="logo-item"><img src="assets/zoom.jpg" alt=""> Zoom</span>
+        <span class="logo-item"><img src="assets/meet.png" alt=""> Google Meet</span>
+        <span class="logo-item"><img src="assets/teams.webp" alt=""> Microsoft Teams</span>
+      </div>
+    </section>
+
+    <section class="band" id="how">
+      <div class="wrap">
+        <header class="section-head">
+          <span class="eyebrow">How it works</span>
+          <h2>Four steps from sign-up to stand-in.</h2>
+        </header>
+        <ol class="steps">
+          <li><span class="step-num">01</span><h3>Connect</h3><p>Link Zoom, Google Meet or Microsoft Teams, and tell zoope every name people call you.</p></li>
+          <li><span class="step-num">02</span><h3>Teach</h3><p>Write the updates and facts it may share. Anything else becomes a follow-up, never a guess.</p></li>
+          <li><span class="step-num">03</span><h3>Clone</h3><p>A 478-point face scan and 26 spoken letters become an avatar that looks and sounds like you.</p></li>
+          <li><span class="step-num">04</span><h3>Confirm</h3><p>Approve each meeting. zoope joins at the start time and hands you a summary afterwards.</p></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="band band-muted" id="judgement">
+      <div class="wrap split">
+        <div class="split-copy">
+          <span class="eyebrow">Judgement</span>
+          <h2>Speaks when it's spoken to. Quiet when it isn't.</h2>
+          <p>Every line in the meeting is scored. zoope answers when someone uses one of your names, asks the room something your notes cover, or follows up on what it just said. It holds back when a question is meant for someone else, or the speaker hasn't finished.</p>
+          <ul class="check-list">
+            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Recognises nicknames, even when speech-to-text misspells them</li>
+            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Turns requests into action items with due dates</li>
+            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Shows its reasoning for every decision</li>
           </ul>
         </div>
-        <div class="home-orbit reveal" aria-hidden="true">
-          <div class="orbit-wrap">
-            <div class="ring"></div>
-            <div class="orbit">
-              <div class="planet p1"><img src="assets/zoom.jpg" alt=""></div>
-              <div class="planet p2"><img src="assets/meet.png" alt=""></div>
-              <div class="planet p3"><img src="assets/teams.webp" alt=""></div>
-            </div>
-            <div class="orbit-core"><span class="core-label">AI</span></div>
+        <div class="panel mock" aria-hidden="true">
+          <div class="panel-head">
+            <span class="live-dot"></span><span class="panel-title">Weekly sync</span>
+            <span class="mono muted-2 push">00:42</span>
+          </div>
+          <div class="mock-rows">
+            <div class="mock-row"><span class="pill pill-accent">Respond</span><span class="mock-text"><b>Priya</b> Alex, what's the status of the redesign?</span><span class="score"><i style="--w:60%"></i><em>0.90</em></span></div>
+            <div class="mock-row"><span class="pill">Quiet</span><span class="mock-text"><b>Priya</b> Jordan, can you send the numbers by Friday?</span><span class="score"><i style="--w:0%"></i><em>−0.90</em></span></div>
+            <div class="mock-row"><span class="pill">Quiet</span><span class="mock-text"><b>Sam</b> It's on track, we should ship next week, and</span><span class="score"><i style="--w:0%"></i><em>−0.50</em></span></div>
+            <div class="mock-row"><span class="pill pill-accent">Respond</span><span class="mock-text"><b>Priya</b> Does anyone have thoughts on design reviews?</span><span class="score"><i style="--w:47%"></i><em>0.70</em></span></div>
           </div>
         </div>
       </div>
-      <nav class="home-steps">
-        <a href="#/setup" class="reveal"><span>01</span><b>Setup</b><em>Connect apps and tell zoope your names</em></a>
-        <a href="#/clone" class="reveal"><span>02</span><b>Clone</b><em>Scan your face and say the alphabet</em></a>
-        <a href="#/demo" class="reveal"><span>03</span><b>Demo</b><em>See how zoope decides when to talk</em></a>
-        <a href="#/meetings" class="reveal"><span>04</span><b>Meetings</b><em>Confirm which calls zoope joins</em></a>
+    </section>
+
+    <section class="band" id="features">
+      <div class="wrap">
+        <header class="section-head">
+          <span class="eyebrow">Features</span>
+          <h2>Everything a stand-in needs. Nothing it doesn't.</h2>
+        </header>
+        <div class="feature-grid">
+          <article><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg><h3>Photo-real face</h3><p>Your real photo, warped along a 478-point mesh so it talks and blinks.</p></article>
+          <article><svg class="icon" aria-hidden="true"><use href="#i-wave"/></svg><h3>Your voice</h3><p>Built from recordings of you saying the alphabet, stitched together sound by sound.</p></article>
+          <article><svg class="icon" aria-hidden="true"><use href="#i-brain"/></svg><h3>Grounded answers</h3><p>Answers only from the notes you write. Unknowns become follow-ups.</p></article>
+          <article><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg><h3>Action items</h3><p>“Could you draft the email by Thursday?” lands in your summary with its due date.</p></article>
+          <article><svg class="icon" aria-hidden="true"><use href="#i-tag"/></svg><h3>Learns nicknames</h3><p>Hears someone called by an unfamiliar name and asks whether it's you.</p></article>
+          <article><svg class="icon" aria-hidden="true"><use href="#i-calendar"/></svg><h3>Confirm to join</h3><p>Nothing joins on its own. You approve every meeting, one by one.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="band band-muted" id="privacy">
+      <div class="wrap split split-center">
+        <div class="split-copy">
+          <span class="eyebrow">Privacy</span>
+          <h2>Your face and voice never leave this device.</h2>
+          <p>The decision engine, face model and voice synthesiser ship with zoope and run in your browser. No API calls, no servers, no uploads.</p>
+        </div>
+        <dl class="stat-grid">
+          <div><dt>AI network requests</dt><dd>0</dd></div>
+          <div><dt>Face landmarks</dt><dd>478</dd></div>
+          <div><dt>Voice samples</dt><dd>26</dd></div>
+          <div><dt>Data uploaded</dt><dd>0 B</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="band cta-band">
+      <div class="wrap cta-inner">
+        <h2>Send zoope to your next meeting.</h2>
+        <div class="hero-actions">
+          <a href="#/setup" class="btn btn-primary btn-lg">Get started <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+          <a href="#/demo" class="btn btn-secondary btn-lg">Watch the demo</a>
+        </div>
+      </div>
+    </section>
+
+    <footer class="site-footer">
+      <div class="wrap site-footer-inner">
+        <a href="#/" class="wordmark wordmark-sm">zoope</a>
+        <nav aria-label="Footer">
+          <a href="#/setup">Setup</a>
+          <a href="#/clone">Face &amp; voice</a>
+          <a href="#/demo">Demo</a>
+          <a href="#/meetings">Meetings</a>
+        </nav>
+        <span class="muted-2">© 2026 zoope</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- ================================= App shell ================================= -->
+  <div class="app" id="appShell">
+    <aside class="sidebar" aria-label="App navigation">
+      <div class="sidebar-top">
+        <a href="#/" class="wordmark wordmark-sm">zoope</a>
+        <span class="tag">Beta</span>
+      </div>
+
+      <nav class="side-nav">
+        <span class="side-label">Onboarding</span>
+        <a href="#/setup" data-route="setup"><svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg><span>Setup</span><i class="nav-state" data-state="setup"></i></a>
+        <a href="#/clone" data-route="clone"><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg><span>Face &amp; voice</span><i class="nav-state" data-state="clone"></i></a>
+        <span class="side-label">Meetings</span>
+        <a href="#/demo" data-route="demo"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg><span>Demo meeting</span></a>
+        <a href="#/meetings" data-route="meetings"><svg class="icon" aria-hidden="true"><use href="#i-calendar"/></svg><span>Meetings</span><i class="nav-count" id="navMeetingCount"></i></a>
       </nav>
-    </section>
 
-    <!-- ============================= Setup ============================= -->
-    <section class="page" data-page="setup">
-      <div class="container">
-        <header class="page-head">
-          <span class="eyebrow reveal">Step 1 of 2</span>
-          <h1 class="reveal">Set up zoope</h1>
-          <p class="reveal">Connect your meeting apps, tell zoope what people call you, and give it the facts it may share.</p>
-        </header>
-
-        <section class="card reveal">
-          <h2><span class="step">1</span> Connect your meeting apps</h2>
-          <p class="muted">Pick the platforms zoope is allowed to join on your behalf.</p>
-          <div class="platforms">
-            <div class="platform" data-platform="zoom">
-              <img src="assets/zoom.jpg" alt="Zoom">
-              <div class="pname">Zoom</div>
-              <input type="email" placeholder="Zoom account email" class="acct">
-              <button class="btn connect-btn">Connect</button>
-            </div>
-            <div class="platform" data-platform="meet">
-              <img src="assets/meet.png" alt="Google Meet">
-              <div class="pname">Google Meet</div>
-              <input type="email" placeholder="Google account email" class="acct">
-              <button class="btn connect-btn">Connect</button>
-            </div>
-            <div class="platform" data-platform="teams">
-              <img src="assets/teams.webp" alt="Microsoft Teams">
-              <div class="pname">Microsoft Teams</div>
-              <input type="email" placeholder="Microsoft account email" class="acct">
-              <button class="btn connect-btn">Connect</button>
-            </div>
-          </div>
-        </section>
-
-        <div class="two-col">
-          <section class="card reveal">
-            <h2><span class="step">2</span> What do people call you?</h2>
-            <div class="chat" id="setupChat"></div>
-            <form class="chat-input" id="setupForm">
-              <input id="setupInput" autocomplete="off" placeholder="Type your answer…">
-              <button class="btn">Send</button>
-            </form>
-            <div class="chips" id="nameChips"></div>
-          </section>
-
-          <section class="card reveal">
-            <h2><span class="step">3</span> Teach zoope what to say</h2>
-            <p class="muted">Updates, facts and opinions zoope may share. Anything else becomes a follow-up for you.</p>
-            <textarea id="knowledge" rows="6" placeholder="e.g. The website redesign is 80% done and launches on October 14. I'm working on the checkout page this week. Budget questions should go to Priya. I prefer Tuesday afternoons for reviews."></textarea>
-            <button class="btn" id="saveKnowledge">Save knowledge</button>
-            <span id="knowledgeSaved" class="muted small"></span>
-          </section>
+      <div class="checklist" id="checklist">
+        <div class="checklist-head">
+          <span>Getting started</span>
+          <span class="mono muted-2" id="checklistCount">0/6</span>
         </div>
-
-        <div class="page-nav reveal">
-          <a href="#/" class="btn ghost">&larr; Home</a>
-          <a href="#/clone" class="btn">Next: clone your face &amp; voice &rarr;</a>
-        </div>
+        <div class="progress"><span id="checklistBar"></span></div>
+        <ul id="checklistItems"></ul>
       </div>
-    </section>
 
-    <!-- ============================= Clone ============================= -->
-    <section class="page" data-page="clone">
-      <div class="container">
-        <header class="page-head">
-          <span class="eyebrow reveal">Step 2 of 2</span>
-          <h1 class="reveal">Clone your face &amp; voice</h1>
-          <p class="reveal">zoope maps 478 points on your face and animates your real photo, then builds your voice from you saying the alphabet. Nothing leaves this device.</p>
-        </header>
+      <div class="sidebar-foot">
+        <span class="status-dot"></span> Running locally
+      </div>
+    </aside>
 
-        <section class="card reveal">
-          <h2><span class="step">1</span> Face clone</h2>
-          <p class="muted">Turn on the camera, fit your face inside the oval, and press Scan face. You can also read the sentence to tune the backup voice.</p>
-          <div class="scan-grid">
-            <div class="cam-box">
-              <video id="cam" playsinline muted></video>
-              <div class="oval-guide"></div>
-              <div class="scan-line" id="scanLine"></div>
-              <div class="cam-placeholder" id="camPlaceholder">Camera is off</div>
-            </div>
-            <div class="scan-controls">
-              <button class="btn" id="startCam">Turn on camera &amp; mic</button>
-              <button class="btn" id="scanFace" disabled>Scan face</button>
-              <div class="read-this">Read aloud: <em>“Hi everyone, thanks for having me. I'm happy to share a quick update and answer any questions.”</em></div>
-              <button class="btn" id="recordVoice" disabled>Record voice (6s)</button>
-              <div class="meter"><div id="meterFill"></div></div>
-              <div id="scanStatus" class="muted"></div>
-            </div>
-            <div class="avatar-box">
-              <canvas id="avatarCanvas" width="400" height="400"></canvas>
-              <div id="avatarInfo" class="muted small">No avatar yet</div>
-              <button class="btn ghost" id="testVoice" disabled>Hear my AI voice</button>
-            </div>
-          </div>
+    <div class="main">
+      <header class="topbar">
+        <div class="crumbs"><a href="#/">zoope</a><span aria-hidden="true">/</span><b id="crumbCurrent">Setup</b></div>
+        <div class="topbar-actions">
+          <span class="chip-local"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>On-device</span>
+          <a href="#/" class="btn btn-ghost btn-sm">Back to site</a>
+        </div>
+      </header>
 
+      <main class="content">
+        <!-- ================================ Setup ================================ -->
+        <section class="page app-page" data-page="setup">
+          <header class="page-header">
+            <div>
+              <h1>Setup</h1>
+              <p>Connect your meeting apps, tell zoope what people call you, and give it the facts it may share.</p>
+            </div>
+            <a href="#/clone" class="btn btn-primary">Continue <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+          </header>
+
+          <section class="setting">
+            <div class="setting-meta">
+              <h2>Connections</h2>
+              <p>The platforms zoope may join on your behalf. You still confirm each meeting.</p>
+            </div>
+            <div class="panel">
+              <div class="platform" data-platform="zoom">
+                <img src="assets/zoom.jpg" alt="">
+                <div class="platform-info"><b>Zoom</b><span class="platform-sub">Not connected</span></div>
+                <input type="email" class="input acct" placeholder="you@company.com" aria-label="Zoom account email">
+                <button type="button" class="btn btn-secondary connect-btn">Connect</button>
+              </div>
+              <div class="platform" data-platform="meet">
+                <img src="assets/meet.png" alt="">
+                <div class="platform-info"><b>Google Meet</b><span class="platform-sub">Not connected</span></div>
+                <input type="email" class="input acct" placeholder="you@gmail.com" aria-label="Google account email">
+                <button type="button" class="btn btn-secondary connect-btn">Connect</button>
+              </div>
+              <div class="platform" data-platform="teams">
+                <img src="assets/teams.webp" alt="">
+                <div class="platform-info"><b>Microsoft Teams</b><span class="platform-sub">Not connected</span></div>
+                <input type="email" class="input acct" placeholder="you@company.com" aria-label="Microsoft account email">
+                <button type="button" class="btn btn-secondary connect-btn">Connect</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="setting">
+            <div class="setting-meta">
+              <h2>Names</h2>
+              <p>zoope answers when someone uses any of these, and introduces itself with the starred one.</p>
+            </div>
+            <div class="panel">
+              <div class="chat" id="setupChat" aria-live="polite"></div>
+              <form class="composer" id="setupForm">
+                <input id="setupInput" class="input" autocomplete="off" placeholder="Type your answer…" aria-label="Your answer">
+                <button class="btn btn-primary">Send</button>
+              </form>
+              <div class="panel-foot chips" id="nameChips"></div>
+            </div>
+          </section>
+
+          <section class="setting">
+            <div class="setting-meta">
+              <h2>Knowledge</h2>
+              <p>Updates, facts and opinions zoope may share. It never answers beyond these; anything else becomes a follow-up.</p>
+            </div>
+            <div class="panel">
+              <textarea id="knowledge" class="textarea" rows="7" placeholder="The website redesign is 80% done and launches on October 14. I'm working on the checkout page this week. Budget questions should go to Priya." aria-label="Knowledge"></textarea>
+              <div class="panel-foot">
+                <span class="muted-2" id="knowledgeSaved">No notes yet</span>
+                <button type="button" class="btn btn-secondary" id="saveKnowledge">Save</button>
+              </div>
+            </div>
+          </section>
         </section>
 
-        <section class="card reveal">
-          <h2><span class="step">2</span> Voice clone: say the alphabet</h2>
-        <p class="muted">zoope shows one letter at a time. Say the letter's name clearly (“ay”, “bee”, “see”…), then pause. It moves on by itself. Every letter holds sounds zoope cuts out and reuses to speak in your voice. Click a letter to redo it.</p>
-        <div class="alpha-stage">
-          <div class="big-letter" id="bigLetter">A</div>
-          <div class="alpha-side">
-            <div class="alpha-grid" id="alphaGrid"></div>
-            <div class="alpha-actions">
-              <button class="btn" id="startAlphabet" disabled>Start alphabet</button>
-              <button class="btn ghost" id="stopAlphabet" disabled>Stop</button>
-              <button class="btn ghost" id="testClone" disabled>Hear my cloned voice</button>
-              <label class="voice-mode">Meeting voice
-                <select id="voiceMode">
-                  <option value="clone">My cloned voice</option>
-                  <option value="tts">Smooth browser voice</option>
+        <!-- ============================ Face & voice ============================ -->
+        <section class="page app-page" data-page="clone">
+          <header class="page-header">
+            <div>
+              <h1>Face &amp; voice</h1>
+              <p>Build your avatar from a face scan and your voice from the alphabet. Everything is processed on this device.</p>
+            </div>
+            <button type="button" class="btn btn-primary" id="startCam"><svg class="icon" aria-hidden="true"><use href="#i-video"/></svg><span>Enable camera &amp; mic</span></button>
+          </header>
+
+          <section class="panel">
+            <div class="panel-head">
+              <span class="panel-title">Face</span>
+              <span class="pill" id="faceBadge">Not scanned</span>
+            </div>
+            <div class="face-grid">
+              <div class="viewport">
+                <video id="cam" playsinline muted></video>
+                <div class="oval-guide"></div>
+                <div class="scan-line" id="scanLine"></div>
+                <div class="viewport-empty" id="camPlaceholder">
+                  <svg class="icon" aria-hidden="true"><use href="#i-video"/></svg>
+                  <span>Camera is off</span>
+                </div>
+              </div>
+              <div class="face-side">
+                <canvas id="avatarCanvas" width="400" height="400"></canvas>
+                <dl class="kv">
+                  <div><dt>Model</dt><dd>MediaPipe Face Landmarker</dd></div>
+                  <div><dt>Avatar</dt><dd id="avatarInfo">None yet</dd></div>
+                </dl>
+                <div class="btn-row">
+                  <button type="button" class="btn btn-primary" id="scanFace" disabled><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg>Scan face</button>
+                  <button type="button" class="btn btn-secondary" id="testVoice" disabled><svg class="icon" aria-hidden="true"><use href="#i-volume"/></svg>Preview</button>
+                </div>
+                <p class="hint" id="scanStatus">Enable the camera, then fit your face inside the oval in good light.</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <span class="panel-title">Voice</span>
+              <span class="pill" id="voiceBadge">0 / 26</span>
+              <label class="select-inline push">Meeting voice
+                <select id="voiceMode" class="select">
+                  <option value="clone">Cloned voice</option>
+                  <option value="tts">Browser voice</option>
                 </select>
               </label>
             </div>
-            <div id="alphaStatus" class="muted small">Turn on the camera &amp; mic above to start.</div>
-          </div>
-        </div>
-        </section>
-
-        <div class="page-nav reveal">
-          <a href="#/setup" class="btn ghost">&larr; Setup</a>
-          <a href="#/demo" class="btn">Next: try a demo meeting &rarr;</a>
-        </div>
-      </div>
-    </section>
-
-    <!-- ============================== Demo ============================== -->
-    <section class="page" data-page="demo">
-      <div class="container">
-        <header class="page-head">
-          <span class="eyebrow reveal">Demo meeting</span>
-          <h1 class="reveal">Watch zoope in a meeting</h1>
-          <p class="reveal">Sam, Priya and Jordan hold a quick sync. zoope answers when it's addressed, stays quiet when it isn't, and notes action items. Its reasoning shows live.</p>
-        </header>
-
-        <div class="card demo-cta reveal" id="demoIntro">
-          <div>
-            <b>12-line scripted meeting, about a minute long</b>
-            <p class="muted">Uses your avatar, voice and knowledge if you've set them up, or sample notes if not.</p>
-          </div>
-          <button class="btn big" id="demoBtnTop">&#9654; Start demo meeting</button>
-        </div>
-        <div class="slot" id="demoSlot"></div>
-      </div>
-    </section>
-
-    <!-- ============================ Meetings ============================ -->
-    <section class="page" data-page="meetings">
-      <div class="container">
-        <header class="page-head">
-          <span class="eyebrow reveal">Meetings</span>
-          <h1 class="reveal">Your meetings</h1>
-          <p class="reveal">Add meetings from your connected apps. zoope only joins the ones you confirm, and joins by itself at the start time while this page is open.</p>
-        </header>
-
-        <section class="card reveal">
-          <h2>Schedule a meeting</h2>
-          <form id="meetingForm" class="meeting-form">
-            <input id="mTitle" placeholder="Meeting title" required>
-            <select id="mPlatform"></select>
-            <input id="mLink" placeholder="Meeting link (optional)">
-            <input id="mTime" type="datetime-local" required>
-            <input id="mPeople" placeholder="Other attendees (comma separated)">
-            <button class="btn">Add meeting</button>
-          </form>
-          <div id="meetingList" class="meeting-list"></div>
-        </section>
-        <div class="slot" id="meetingSlot"></div>
-      </div>
-    </section>
-
-    <div class="hidden" id="roomHolder">
-      <!-- Meeting room -->
-      <section id="room" class="card room hidden">
-        <div class="room-head">
-          <h2 id="roomTitle">Meeting</h2>
-          <button class="btn danger" id="leaveRoom">Leave meeting</button>
-        </div>
-        <div class="room-grid">
-          <div class="stage" id="stage">
-            <div class="tile you-tile">
-              <canvas id="roomAvatar" width="400" height="400"></canvas>
-              <div class="tile-name" id="roomAvatarName">You (zoope)</div>
+            <div class="voice-grid">
+              <div class="letter-stage">
+                <div class="big-letter" id="bigLetter">A</div>
+                <div class="meter"><span id="meterFill"></span></div>
+              </div>
+              <div class="voice-side">
+                <p class="hint-strong">Say each letter's name clearly (“ay”, “bee”, “see”), then pause. zoope moves on by itself. Select a letter to redo it.</p>
+                <div class="keys" id="alphaGrid"></div>
+                <div class="btn-row">
+                  <button type="button" class="btn btn-primary" id="startAlphabet" disabled><svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg>Record alphabet</button>
+                  <button type="button" class="btn btn-secondary" id="stopAlphabet" disabled><svg class="icon" aria-hidden="true"><use href="#i-stop"/></svg>Stop</button>
+                  <button type="button" class="btn btn-secondary" id="testClone" disabled><svg class="icon" aria-hidden="true"><use href="#i-volume"/></svg>Hear cloned voice</button>
+                </div>
+                <p class="hint" id="alphaStatus">Enable the camera &amp; mic to start.</p>
+              </div>
             </div>
-          </div>
-          <div class="side">
-            <div class="transcript" id="transcript"></div>
-            <form id="sayForm" class="say-form">
-              <select id="speaker"></select>
-              <input id="sayInput" autocomplete="off" placeholder="What does this person say?">
-              <button class="btn">Say</button>
+            <div class="panel-foot backup">
+              <div>
+                <b>Backup voice</b>
+                <span class="muted-2">Read aloud: “Hi everyone, thanks for having me. I'm happy to share a quick update and answer any questions.”</span>
+              </div>
+              <button type="button" class="btn btn-secondary" id="recordVoice" disabled>Record 6s</button>
+            </div>
+          </section>
+        </section>
+
+        <!-- ================================ Demo ================================ -->
+        <section class="page app-page" data-page="demo">
+          <header class="page-header">
+            <div>
+              <h1>Demo meeting</h1>
+              <p>A short scripted sync. Watch zoope answer when it's addressed, stay quiet when it isn't, and capture action items.</p>
+            </div>
+            <button type="button" class="btn btn-primary" id="demoBtnTop"><svg class="icon icon-fill" aria-hidden="true"><use href="#i-play"/></svg><span>Start demo</span></button>
+          </header>
+
+          <section class="panel" id="demoIntro">
+            <dl class="intro-grid">
+              <div><dt>Participants</dt><dd>Sam, Priya, Jordan and you</dd></div>
+              <div><dt>Length</dt><dd>12 lines, about a minute</dd></div>
+              <div><dt>Uses</dt><dd>Your avatar, voice and notes, or sample notes if you have none</dd></div>
+              <div><dt>Watch for</dt><dd>The reasoning panel: why each line got a reply, or didn't</dd></div>
+            </dl>
+          </section>
+          <div class="slot" id="demoSlot"></div>
+        </section>
+
+        <!-- ============================== Meetings ============================== -->
+        <section class="page app-page" data-page="meetings">
+          <header class="page-header">
+            <div>
+              <h1>Meetings</h1>
+              <p>zoope only joins meetings you confirm. Confirmed meetings start by themselves while zoope is open.</p>
+            </div>
+            <button type="button" class="btn btn-primary" id="newMeetingBtn"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>New meeting</button>
+          </header>
+
+          <section class="panel hidden" id="meetingFormPanel">
+            <div class="panel-head"><span class="panel-title">New meeting</span></div>
+            <form id="meetingForm" class="form-grid">
+              <label class="field field-wide"><span>Title</span><input id="mTitle" class="input" placeholder="Weekly sync" required></label>
+              <label class="field"><span>Platform</span><select id="mPlatform" class="select"></select></label>
+              <label class="field"><span>Starts</span><input id="mTime" class="input" type="datetime-local" required></label>
+              <label class="field field-wide"><span>Attendees</span><input id="mPeople" class="input" placeholder="Sam, Priya, Jordan"></label>
+              <label class="field field-wide"><span>Link <em>Optional</em></span><input id="mLink" class="input" placeholder="https://zoom.us/j/…"></label>
+              <div class="form-actions">
+                <span class="field-error" id="meetingError"></span>
+                <button type="button" class="btn btn-ghost" id="cancelMeeting">Cancel</button>
+                <button class="btn btn-primary">Add meeting</button>
+              </div>
             </form>
-            <div class="room-tools">
-              <button class="btn ghost" id="listenBtn">🎤 Listen to room</button>
-              <button class="btn ghost" id="demoBtn">▶ Play demo meeting</button>
+          </section>
+
+          <section class="panel">
+            <div class="table-head">
+              <span>Meeting</span><span>Starts</span><span>Status</span><span></span>
             </div>
-          </div>
+            <div id="meetingList"></div>
+          </section>
+          <div class="slot" id="meetingSlot"></div>
+        </section>
+
+        <!-- Meeting room (moved into the Demo or Meetings page when joined) -->
+        <div class="hidden" id="roomHolder">
+          <section id="room" class="panel room hidden">
+            <div class="panel-head room-head">
+              <span class="live-dot"></span>
+              <span class="panel-title" id="roomTitle">Meeting</span>
+              <span class="pill" id="roomPlatform">Zoom</span>
+              <span class="mono muted-2" id="roomTimer">00:00</span>
+              <div class="room-actions">
+                <button type="button" class="btn btn-secondary btn-sm" id="listenBtn"><svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg><span>Listen</span></button>
+                <button type="button" class="btn btn-secondary btn-sm" id="demoBtn"><svg class="icon icon-fill" aria-hidden="true"><use href="#i-play"/></svg>Replay</button>
+                <button type="button" class="btn btn-danger btn-sm" id="leaveRoom">Leave</button>
+              </div>
+            </div>
+            <div class="room-grid">
+              <div class="stage" id="stage">
+                <div class="tile you-tile">
+                  <canvas id="roomAvatar" width="400" height="400"></canvas>
+                  <div class="tile-name" id="roomAvatarName">You (zoope)</div>
+                </div>
+              </div>
+              <div class="room-side">
+                <div class="side-head">Transcript</div>
+                <div class="transcript" id="transcript" aria-live="polite"></div>
+                <form id="sayForm" class="composer composer-room">
+                  <select id="speaker" class="select" aria-label="Speaker"></select>
+                  <input id="sayInput" class="input" autocomplete="off" placeholder="What does this person say?" aria-label="Line">
+                  <button class="btn btn-primary">Say</button>
+                </form>
+              </div>
+            </div>
+            <div class="reasoning">
+              <div class="side-head">Reasoning <span class="muted-2">Replies at a score of 0.50 or more</span></div>
+              <div id="decisionLog"></div>
+            </div>
+          </section>
+
+          <section id="summary" class="panel hidden">
+            <div class="panel-head"><span class="panel-title">Meeting summary</span></div>
+            <div id="summaryBody"></div>
+          </section>
         </div>
-        <details class="brain-log" open>
-          <summary>zoope's thinking</summary>
-          <div id="decisionLog"></div>
-        </details>
-      </section>
-
-      <section id="summary" class="card hidden">
-        <h2>Meeting summary</h2>
-        <div id="summaryBody"></div>
-      </section>
+      </main>
     </div>
-  </main>
+  </div>
 
-  <footer class="foot">&copy; zoope. AI that shows up for you.</footer>
+  <!-- Dialog + toasts -->
+  <div class="dialog-backdrop hidden" id="dialog" role="dialog" aria-modal="true" aria-labelledby="dialogTitle">
+    <div class="dialog">
+      <h2 id="dialogTitle"></h2>
+      <div id="dialogBody"></div>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-secondary" id="dialogCancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="dialogOk">Confirm</button>
+      </div>
+    </div>
+  </div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <script src="js/engine.js"></script>
   <script src="js/facemesh.js"></script>
