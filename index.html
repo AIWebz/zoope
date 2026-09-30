@@ -9,30 +9,51 @@
 </head>
 <body>
   <header class="topbar">
-    <a href="#" class="brand">zoope</a>
-    <nav>
-      <a href="#connect">Connect</a>
-      <a href="#names">Names</a>
-      <a href="#scan">Scan</a>
-      <a href="#meetings">Meetings</a>
-    </nav>
+    <div class="topbar-inner">
+      <a href="#" class="brand">zoope</a>
+      <nav>
+        <a href="#connect">Connect</a>
+        <a href="#names">Names</a>
+        <a href="#scan">Scan</a>
+        <a href="#meetings">Meetings</a>
+      </nav>
+      <a href="#connect" class="btn small nav-cta">Get started</a>
+    </div>
   </header>
 
-  <main>
-    <!-- Hero -->
-    <section class="hero">
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-bg" aria-hidden="true"></div>
+    <div class="hero-card">
       <div class="orbit-wrap" aria-hidden="true">
         <div class="orbit">
           <div class="planet p1"><img src="assets/zoom.jpg" alt=""></div>
           <div class="planet p2"><img src="assets/meet.png" alt=""></div>
           <div class="planet p3"><img src="assets/teams.webp" alt=""></div>
         </div>
-        <div class="orbit-core">zoope</div>
+        <div class="orbit-core"><span class="live-dot"></span></div>
       </div>
       <h1 class="logo">zoope</h1>
-      <p class="tagline">Your AI avatar attends meetings for you — with your face, your voice, and good judgement about when to speak.</p>
-      <p class="note">The whole AI engine runs right here in your browser. No APIs, no servers — your face and voice never leave this device.</p>
-      <a href="#connect" class="btn big">Get started</a>
+      <p class="tagline">Your AI avatar attends meetings for you, with your face, your voice, and good judgement about when to speak.</p>
+      <div class="hero-actions">
+        <a href="#connect" class="btn big">Get started</a>
+        <a href="#meetings" class="btn big outline">See a demo</a>
+      </div>
+      <ul class="trust">
+        <li>Runs 100% in your browser</li>
+        <li>No APIs, no servers</li>
+        <li>Zoom · Google Meet · Teams</li>
+      </ul>
+    </div>
+  </section>
+
+  <main>
+    <!-- How it works -->
+    <section class="how">
+      <div class="how-item"><span>01</span><b>Connect</b><p>Link Zoom, Google Meet or Microsoft Teams.</p></div>
+      <div class="how-item"><span>02</span><b>Clone</b><p>Scan your face and say the alphabet to clone your look and voice.</p></div>
+      <div class="how-item"><span>03</span><b>Confirm</b><p>Pick which meetings zoope attends. It only joins the ones you OK.</p></div>
+      <div class="how-item"><span>04</span><b>Relax</b><p>zoope speaks when it's addressed and brings back a summary.</p></div>
     </section>
 
     <!-- Step 1: Connect -->
