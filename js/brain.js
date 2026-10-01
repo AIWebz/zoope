@@ -46,6 +46,11 @@
     worker.postMessage({ id: 0, kind: 'load' });
   }
 
+  function sentenceEnd(b) {
+    var re = /[.!?](?=\s|$)/g, m;
+    while ((m = re.exec(b))) if (b.slice(0, m.index + 1).trim().split(/\s+/).length >= 2) return m.index;
+    return -1;
+  }
   function words(s) { return String(s).match(/[A-Za-z0-9][\w'%.-]*/g) || []; }
   // a personal claim ("I", "we", "my", "our"…) may only use numbers and names zoope was given
   function grounded(sentence, known) {
@@ -88,7 +93,7 @@
     var known = ' ' + notes.concat((opts.history || []).map(function (h) { return h.speaker + ' ' + h.text; }), [name, opts.fullName || '', opts.speaker, opts.text]).join(' ').toLowerCase() + ' ';
 
     return new Promise(function (resolve) {
-      var id = ++seq, buf = '', said = [], ask = false, finished = false, firstTimer;
+      var id = ++seq, buf = '', said = [], ask = false, finished = false, firstTimer, gotToken = false;
       var finish = function (val) {
         if (finished) return;
         finished = true; clearTimeout(firstTimer); delete handlers[id];
@@ -109,11 +114,15 @@
       handlers[id] = function (m) {
         if (finished) return;
         if (m.kind === 'token') {
+          if (!gotToken) { gotToken = true; clearTimeout(firstTimer); firstTimer = setTimeout(function () { if (!said.length && buf.trim()) { take(buf + '.'); buf = ''; } }, 12000); }
           buf += m.text;
-          var re = /^([\s\S]*?[.!?])(\s+|$)(?=\s*\S)/, match;
-          while ((match = buf.match(re)) && match[1].split(/\s+/).length >= 2) {
-            buf = buf.slice(match[0].length);
-            if (!take(match[1])) { finish({ said: said, ask: ask }); return; }
+          // speak a sentence the moment its closing punctuation arrives (don't wait for the next one);
+          // a one-word sentence ("Sure.") is joined with the next
+          var end;
+          while ((end = sentenceEnd(buf)) >= 0) {
+            var sent = buf.slice(0, end + 1);
+            buf = buf.slice(end + 1);
+            if (!take(sent)) { finish({ said: said, ask: ask }); return; }
           }
         } else if (m.kind === 'done' || m.kind === 'error') {
           if (m.kind === 'error') { lastError = m.message; if (window.console) console.warn('[zoope AI]', m.message); }
@@ -121,8 +130,9 @@
           finish(said.length || ask ? { said: said, ask: ask } : null);
         }
       };
-      // a reply that hasn't started speaking within the limit is replaced by the rule engine's
-      firstTimer = setTimeout(function () { if (!said.length) { stop(); finish(null); } }, opts.firstTimeout || 2500);
+      // only if the model hasn't produced anything at all in time is the rule engine's reply used;
+      // once it is writing, zoope waits for its sentence
+      firstTimer = setTimeout(function () { if (!gotToken) { stop(); finish(null); } }, opts.firstTimeout || 8000);
       worker.postMessage({ id: id, kind: 'ask', messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], maxTokens: 90 });
     });
   }

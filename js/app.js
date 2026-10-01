@@ -1042,6 +1042,19 @@
       el.className = 'pill ' + (st.state === 'ready' ? 'pill-green pill-dot' : st.state === 'loading' ? 'pill-amber' : '');
     });
   });
+  // click the AI badge to test it with a simple question
+  $('brainStateNav').style.cursor = 'pointer';
+  $('brainStateNav').addEventListener('click', function () {
+    var st = ZoopeBrain.status();
+    if (st.state !== 'ready') { toast(st.state === 'loading' ? 'The AI is still loading (' + Math.round(st.progress * 100) + '%).' : 'The AI isn\'t running: ' + (st.error || 'not started'), 'error'); return; }
+    toast('Asking the AI: “What is 12 times 7?”');
+    var t0 = Date.now(), out = [];
+    ZoopeBrain.generate({ name: state.profile.preferred || 'Alex', speaker: 'Test', text: 'What is 12 times 7?', notes: [], history: [], firstTimeout: 20000 }, function (x) { out.push(x); })
+      .then(function (res) {
+        if (res && out.length) toast('AI (' + st.device + ', ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s): ' + out.join(' '));
+        else toast('The AI didn\'t answer: ' + (ZoopeBrain.lastError() || 'no output'), 'error');
+      });
+  });
   // the AI engine is always on: on a computer it starts as soon as zoope opens
   if (!IS_PHONE) setTimeout(function () { ZoopeBrain.load(); }, 1500);
   $('focusMeeting').addEventListener('click', function () { if (room && room.session) room.session.focus(); });
@@ -1165,7 +1178,7 @@
       name: r.engine.preferred, fullName: state.profile.fullName, speaker: speaker, text: text, notes: notes,
       history: r.engine.history.slice(0, -2),
       // CPU-only models need longer to start; on a GPU replies start within about a second
-      firstTimeout: ZoopeBrain.status().device === 'webgpu' ? 3000 : window.crossOriginIsolated ? 5000 : 7000
+      firstTimeout: ZoopeBrain.status().device === 'webgpu' ? 6000 : 10000
     }, function (sentence) {
       if (room !== r) return;
       if (first) { first = false; aiSay(sentence); } else rest.push(sentence);
