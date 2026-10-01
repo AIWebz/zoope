@@ -125,7 +125,7 @@
             if (!take(sent)) { finish({ said: said, ask: ask }); return; }
           }
         } else if (m.kind === 'done' || m.kind === 'error') {
-          if (m.kind === 'error') { lastError = m.message; if (window.console) console.warn('[zoope AI]', m.message); }
+          if (m.kind === 'error') { lastError = m.message; if (window.console) console.warn('[zoope AI]', m.message, m.stack || ''); }
           if (m.kind === 'done' && buf.trim()) take(buf);
           finish(said.length || ask ? { said: said, ask: ask } : null);
         }

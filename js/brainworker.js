@@ -27,7 +27,23 @@ function setup() {
   env.allowLocalModels = false;
   env.backends.onnx.wasm.wasmPaths = new URL('../vendor/transformers/', import.meta.url).href;
 }
-let gen = null;
+let gen = null, current = null, fellBack = false;
+
+/* If writing a reply fails on the GPU, switch to the CPU model for good (some GPUs load the model but fail to run it). */
+async function cpuFallback() {
+  fellBack = true;
+  env.remoteHost = 'https://huggingface.co/';
+  for (const host of ['https://huggingface.co/', 'https://hf-mirror.com/']) {
+    try {
+      env.remoteHost = host;
+      gen = await pipeline('text-generation', 'onnx-community/Qwen2.5-0.5B-Instruct', { dtype: 'q4', device: 'wasm' });
+      current = { model: 'onnx-community/Qwen2.5-0.5B-Instruct', device: 'wasm', dtype: 'q4' };
+      self.postMessage({ id: 0, kind: 'ready', device: 'wasm', model: current.model });
+      return true;
+    } catch (e) { /* try the mirror */ }
+  }
+  return false;
+}
 
 async function load(id) {
   await libReady;
@@ -46,6 +62,7 @@ async function load(id) {
       try {
         env.remoteHost = host;
         gen = await pipeline('text-generation', plan.model, { dtype: plan.dtype, device: plan.device, progress_callback: progress });
+        current = plan;
         self.postMessage({ id, kind: 'ready', device: plan.device, model: plan.model });
         return;
       } catch (err) {
@@ -74,10 +91,15 @@ async function askNow(id, messages, maxTokens) {
     skip_prompt: true, skip_special_tokens: true,
     callback_function: (text) => { if (stopped.has(id)) throw new Error('__stop'); self.postMessage({ id, kind: 'token', text }); }
   });
+  const opts = { max_new_tokens: maxTokens || 60, do_sample: true, temperature: 0.7, top_p: 0.9, repetition_penalty: 1.1, streamer };
   try {
-    await gen(messages, { max_new_tokens: maxTokens || 60, do_sample: true, temperature: 0.7, top_p: 0.9, repetition_penalty: 1.1, streamer });
+    await gen(messages, opts);
   } catch (err) {
-    if (!/__stop/.test(String(err && err.message))) throw err;
+    if (/__stop/.test(String(err && err.message))) { /* stopped on purpose */ }
+    else if (current && current.device === 'webgpu' && !fellBack && await cpuFallback()) {
+      // the GPU couldn't run it: answer this one on the CPU instead
+      try { await gen(messages, opts); } catch (e2) { if (!/__stop/.test(String(e2 && e2.message))) throw e2; }
+    } else throw err;
   }
   stopped.delete(id);
   self.postMessage({ id, kind: 'done' });
@@ -90,6 +112,6 @@ self.onmessage = async (e) => {
     else if (m.kind === 'ask') await ask(m.id, m.messages, m.maxTokens);
     else if (m.kind === 'stop') stopped.add(m.id);
   } catch (err) {
-    self.postMessage({ id: m.id, kind: 'error', message: err && err.message ? err.message : String(err) });
+    self.postMessage({ id: m.id, kind: 'error', message: err && err.message ? err.message : String(err), stack: err && err.stack ? String(err.stack).slice(0, 1500) : '' });
   }
 };
