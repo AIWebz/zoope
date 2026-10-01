@@ -118,7 +118,7 @@ export class Engine {
                     onProgress?.(message.stage, message.progress);
                 else if (message.kind === "cloned") {
                     this.handlers.delete(id);
-                    resolve({ seconds: message.seconds });
+                    resolve({ seconds: message.seconds, cond: message.cond });
                 }
                 else if (message.kind === "error") {
                     this.handlers.delete(id);
@@ -127,6 +127,19 @@ export class Engine {
             });
             const copy = samples.slice();
             this.worker.postMessage({ id, kind: "clone", samples: copy }, [copy.buffer]);
+        });
+    }
+    /** zoope: use a clone saved earlier, without the encoder. */
+    setVoice(cond) {
+        const id = this.next++;
+        return new Promise((resolve, reject) => {
+            this.handlers.set(id, (message) => {
+                this.handlers.delete(id);
+                if (message.kind === "voiceSet") resolve();
+                else reject(new Error(message.message || "could not set the voice"));
+            });
+            const copy = cond.slice();
+            this.worker.postMessage({ id, kind: "setVoice", cond: copy }, [copy.buffer]);
         });
     }
     /** Warm a voice ahead of a take; failures are not worth reporting. */

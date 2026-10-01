@@ -23,6 +23,8 @@ const ready = () => {
 /** A cloned voice travels as an array; use the one the encoder actually made. */
 const resolveVoice = (voice) => voice instanceof Float32Array ? (cloned ?? voice) : voice;
 async function load(id, options) {
+    // zoope: on phones, trade a little speed for much less memory
+    globalThis.ZOOPE_LOW_MEMORY = !!options.lowMemory;
     pipeline = await Pipeline.load({
         ...options,
         onProgress: (stage, progress) => post({ id, kind: "progress", stage, progress }),
@@ -62,12 +64,20 @@ async function clone(request) {
     cloned = await pipe.clone(request.samples, {
         onProgress: (stage, progress) => post({ id: request.id, kind: "progress", stage, progress }),
     });
+    // zoope: the encoder is only needed once; free it so the model fits on phones
+    if (globalThis.ZOOPE_LOW_MEMORY && pipe.tts.encoder) {
+        try { await pipe.tts.encoder.release(); } catch (e) { /* already freed */ }
+        pipe.tts.encoder = null;
+        pipe.encoderLoaded = false;
+    }
+    const cond = cloned.slice();
     post({
         id: request.id,
         kind: "cloned",
         name: "cloned",
         seconds: Math.min(request.samples.length / pipe.sampleRate, 20),
-    });
+        cond,
+    }, [cond.buffer]);
 }
 async function prepare(request) {
     if (!pipeline)
@@ -91,6 +101,11 @@ self.onmessage = async (event) => {
             await clone(request);
         else if (request.kind === "prepare")
             await prepare(request);
+        else if (request.kind === "setVoice") {
+            // zoope: restore a saved clone without loading the encoder
+            cloned = request.cond;
+            post({ id: request.id, kind: "voiceSet" });
+        }
     }
     catch (cause) {
         post({

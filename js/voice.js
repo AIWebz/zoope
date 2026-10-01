@@ -210,14 +210,16 @@
       lp = (1 - a) * v + a * lp;
       el += lp * lp;
     }
-    var loud = Math.min(1, Math.sqrt(e / n) * 5);
+    var rms = Math.sqrt(e / n);
+    // a soft curve: quiet sounds part the lips a little, normal speech opens about half way
+    var loud = Math.pow(Math.max(0, Math.min(1, (rms - 0.008) / 0.16)), 0.75);
     if (loud < 0.03) return shape('rest');
     var zcrHz = zc / n * rate / 2, low = el / (e || 1);
     var sm = function (a0, a1, v2) { var t = Math.max(0, Math.min(1, (v2 - a0) / (a1 - a0))); return t * t * (3 - 2 * t); };
     var fric = sm(1800, 3800, zcrHz);
     var round = sm(0.8, 0.95, low) * (1 - fric), wide = (1 - sm(0.45, 0.72, low)) * (1 - fric);
     return {
-      open: Math.min(1, loud * 1.4) * (1 - 0.75 * fric) * (1 - 0.3 * round),
+      open: loud * (1 - 0.75 * fric) * (1 - 0.3 * round),
       wide: wide, round: round, teeth: fric * Math.min(1, loud * 4)
     };
   }

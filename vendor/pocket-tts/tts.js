@@ -202,6 +202,8 @@ export class PocketTTS {
         const session = await ort.InferenceSession.create(model, {
             executionProviders: [...executionProviders],
             graphOptimizationLevel: "all",
+            // zoope: without the arena and memory patterns, peak memory drops sharply
+            ...(globalThis.ZOOPE_LOW_MEMORY ? { enableCpuMemArena: false, enableMemPattern: false } : {}),
         });
         return new PocketTTS(session, assets);
     }
@@ -225,6 +227,8 @@ export class PocketTTS {
         this.encoder = await ort.InferenceSession.create(bytes, {
             executionProviders: [...executionProviders],
             graphOptimizationLevel: "all",
+            // zoope: without the arena and memory patterns, peak memory drops sharply
+            ...(globalThis.ZOOPE_LOW_MEMORY ? { enableCpuMemArena: false, enableMemPattern: false } : {}),
         });
     }
     get canClone() {

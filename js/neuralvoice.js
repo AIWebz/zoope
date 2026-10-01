@@ -30,10 +30,42 @@ async function modelsUrl() {
 }
 
 /* Loads the model (downloading it the first time). onProgress(fraction, label). */
+// Phones get far less memory per tab; the runtime then skips its memory arena
+// and frees the voice encoder as soon as the voice is made.
+const LOW_MEMORY = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+  (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent)) || (navigator.deviceMemory && navigator.deviceMemory < 4);
+
+/* The made voice is kept on this device (IndexedDB), so later visits don't need the encoder. */
+function db() {
+  return new Promise((resolve, reject) => {
+    const r = indexedDB.open('zoope-voice', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('voice');
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+}
+async function saveVoice(cond, seconds) {
+  try {
+    const d = await db();
+    await new Promise((res, rej) => { const t = d.transaction('voice', 'readwrite'); t.objectStore('voice').put({ cond, seconds }, 'mine'); t.oncomplete = res; t.onerror = () => rej(t.error); });
+  } catch (e) { /* storage unavailable: the voice lasts this visit */ }
+}
+async function savedVoice() {
+  try {
+    const d = await db();
+    return await new Promise((res) => { const r = d.transaction('voice').objectStore('voice').get('mine'); r.onsuccess = () => res(r.result || null); r.onerror = () => res(null); });
+  } catch (e) { return null; }
+}
+export async function hasSaved() { return !!(await savedVoice()); }
+export async function forget() {
+  try { const d = await db(); d.transaction('voice', 'readwrite').objectStore('voice').delete('mine'); } catch (e) { /* nothing saved */ }
+}
+
 export function load(onProgress) {
   if (!enginePromise) {
     enginePromise = modelsUrl().then(({ url, source }) => Engine.load({
       language: 'english',
+      lowMemory: LOW_MEMORY,
       modelsUrl: url,
       ortWasmUrl: VENDOR + 'onnxruntime/',
       worker: () => new Worker(VENDOR + 'pocket-tts/worker.js', { type: 'module' }),
@@ -70,7 +102,18 @@ export async function clone(samples, rate, onProgress) {
     if (onProgress && p && p.total) onProgress(p.loaded / p.total, 'Encoding your voice');
   });
   clonedSeconds = result.seconds;
+  if (result.cond) await saveVoice(result.cond, result.seconds);
   return result;
+}
+
+/* Loads the model with the voice made earlier on this device. Resolves false when there is none. */
+export async function restore(onProgress) {
+  const saved = await savedVoice();
+  if (!saved) return false;
+  const e = await load(onProgress);
+  await e.setVoice(saved.cond);
+  clonedSeconds = saved.seconds || 1;
+  return true;
 }
 
 /*

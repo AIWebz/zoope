@@ -313,6 +313,7 @@ export function attach(canvas, face, getLevel, opts = {}) {
     resize();
 
     // animation state
+    let lastNow = 0, sylAmp = 1, inSyl = false;
     let mouth = 0, wide = 0, wideS = 0, roundS = 0, teethS = 0, blinkAt = performance.now() + 1600, nextSacc = 0, gaze = [0, 0], gazeT = [0, 0];
     let nod = 0, nodV = 0, lastLevel = 0, talkT = 0;
     const cur = new Float32Array(M.N * 2);
@@ -321,7 +322,7 @@ export function attach(canvas, face, getLevel, opts = {}) {
     // 2D deformation (jaw, lips, lids, eyes) in photo space, then head rotation with depth
     const UPPER_SET = new Set(UPPER_LIP);
     const deform = (open, blink) => {
-      const drop = M.faceH * 0.055 * open;
+      const drop = M.faceH * 0.046 * Math.pow(open, 1.15);
       const [mcx, mcy] = M.mouthC, mw = M.mouthW;
       // lips: spread for "ee", pulled in and pushed out for "oo", upper lip lifted off the teeth for "f"/"s"
       const sx = 0.17 * wideS - 0.32 * roundS;
@@ -359,12 +360,18 @@ export function attach(canvas, face, getLevel, opts = {}) {
       // the voice gives a mouth shape ({ open, wide, round, teeth }) or just a level
       const raw = getLevel ? getLevel() : 0;
       const sh = raw && typeof raw === 'object' ? raw : { open: raw || 0, wide: wide * 0.4, round: 0, teeth: 0 };
-      const level = Math.min(1, Math.max(sh.open || 0, (sh.teeth || 0) * 0.22));
-      // jaw follows the sound, opening fast and closing a little slower; lips move a bit slower than the jaw
-      mouth += (level - mouth) * (level > mouth ? 0.55 : 0.38);
-      wideS += ((sh.wide || 0) - wideS) * 0.35;
-      roundS += ((sh.round || 0) - roundS) * 0.35;
-      teethS += ((sh.teeth || 0) - teethS) * 0.45;
+      const dt = Math.min(0.1, Math.max(0.001, (now - (lastNow || now)) / 1000)); lastNow = now;
+      // natural speech: the jaw opens in ~45 ms and closes in ~90 ms, the lips reshape a bit slower
+      // than the jaw (coarticulation), and each syllable opens a slightly different amount
+      const target = Math.min(1, Math.max(sh.open || 0, (sh.teeth || 0) * 0.22)) * sylAmp;
+      const ease = (tau) => 1 - Math.exp(-dt / tau);
+      mouth += (target - mouth) * ease(target > mouth ? 0.045 : 0.09);
+      wideS += ((sh.wide || 0) - wideS) * ease(0.11);
+      roundS += ((sh.round || 0) - roundS) * ease(0.11);
+      teethS += ((sh.teeth || 0) - teethS) * ease(0.06);
+      const level = mouth;
+      if (target > 0.3 && !inSyl) { inSyl = true; sylAmp = 0.8 + Math.random() * 0.3; }
+      else if (target < 0.12) inSyl = false;
       if (level > 0.25 && lastLevel <= 0.25) { wide = Math.random(); nodV -= 0.006 + Math.random() * 0.008; talkT = s; }
       lastLevel = level;
       // blinks, a little more often while talking

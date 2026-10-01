@@ -484,15 +484,15 @@
   // Phones give a browser tab far less memory than the voice model needs (~1 GB while it
   // loads), and reset the tab instead of reporting an error, so the model never runs there.
   var IS_PHONE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
-  var PHONE_VOICE_MSG = 'Making your voice needs a computer. The voice model needs about 1 GB of memory, more than phone browsers give a tab, so the phone resets the page. Your voice scan is saved; open zoope on a computer to make your voice. On this phone, zoope uses the browser voice tuned to your pitch and pace, which is not your voice.';
+  var PHONE_VOICE_MSG = 'On a phone, zoope makes your voice in low-memory mode: it turns off the camera first and frees the voice encoder as soon as your voice is made. Use Wi-Fi (216 MB download) and close other tabs.';
   function renderVoice(msg) {
     var badge = $('neuralBadge');
     var labels = { none: voiceSample ? 'Scanned' : 'Not scanned', loading: 'Making your voice…', ready: 'Your voice is ready', error: 'Browser voice (fallback)' };
     badge.textContent = labels[neuralState];
     badge.className = 'pill ' + (neuralState === 'ready' ? 'pill-green pill-dot' : neuralState === 'error' ? 'pill-amber' : voiceSample ? 'pill-accent' : '');
-    $('buildNeural').disabled = !voiceSample || neuralState === 'loading' || IS_PHONE;
+    $('buildNeural').disabled = !voiceSample || neuralState === 'loading';
     $('testNeural').classList.toggle('hidden', false);
-    if (IS_PHONE && voiceSample && neuralState !== 'ready' && !msg) msg = PHONE_VOICE_MSG;
+    if (IS_PHONE && voiceSample && neuralState === 'none' && !msg) msg = PHONE_VOICE_MSG;
     $('testNeural').disabled = neuralState !== 'ready' && neuralState !== 'error';
     $('testNeural').lastChild.textContent = neuralState === 'error' ? 'Hear fallback voice' : 'Hear my voice';
     $('playSample').disabled = !voiceSample;
@@ -574,6 +574,7 @@
       renderProfile();
       $('scanVoiceStatus').textContent = 'Voice scanned: ' + profile.voicedSeconds + ' seconds of clear speech measured.';
       renderVoice(IS_PHONE ? PHONE_VOICE_MSG : 'Next, make your voice from this recording.');
+      neural().then(function (m) { m.forget(); }).catch(function () {});
       toast('Voice scanned');
     }).catch(function (err) { toast(err.message, 'error'); })
       .then(function () { btn.disabled = !stream; label.textContent = voiceSample ? 'Scan again (15s)' : 'Scan my voice (15s)'; });
@@ -598,19 +599,23 @@
 
   function buildNeural(quiet) {
     if (!voiceSample || neuralState === 'loading') return Promise.resolve(false);
-    if (IS_PHONE) {
-      neuralState = 'error';
-      renderVoice(PHONE_VOICE_MSG);
+    if (!quiet && LOW_MEMORY && !window.confirm('Making your voice downloads a 216 MB model (use Wi-Fi). zoope turns off the camera and frees memory first. Close other tabs for the best chance. Continue?')) {
       return Promise.resolve(false);
     }
-    if (!quiet && LOW_MEMORY && !window.confirm('Making your voice downloads a 216 MB model and needs about 1 GB of free memory. On a phone it can close this tab. It works best on a computer. Continue?')) {
-      return Promise.resolve(false);
+    // phones: free the camera, face models and preview before the voice model loads
+    if (IS_PHONE) {
+      if (stream) stopCamera();
+      if (stopPreview) { stopPreview(); stopPreview = null; }
     }
     markBuilding(true);
     neuralState = 'loading';
     renderVoice(quiet ? null : 'Loading the voice model…');
     return neural().then(function (m) {
-      return m.clone(voiceSample.data, voiceSample.rate, function (frac, label) { if (!quiet) showProgress(frac, label); });
+      var progress = function (frac, label) { if (!quiet) showProgress(frac, label); };
+      // a voice made earlier on this device is restored without the encoder; otherwise make it now
+      return (quiet ? m.restore(progress) : Promise.resolve(false)).then(function (restored) {
+        return restored || m.clone(voiceSample.data, voiceSample.rate, progress);
+      });
     }).then(function () {
       markBuilding(false);
       neuralState = 'ready';
@@ -619,6 +624,7 @@
       save();
       $('neuralProgress').classList.add('hidden');
       renderVoice('Your voice is ready. zoope will use it in meetings.');
+      if (IS_PHONE) refreshAvatarBox();
       if (!quiet) toast('Your voice is ready');
       return true;
     }).catch(function (err) {
@@ -641,6 +647,10 @@
 
   // Speaks in the user's generated voice; falls back to the tuned browser voice when it isn't available.
   function speakAs(text, onLevel) {
+    // phones load the voice model only when it is first needed
+    if (IS_PHONE && state.neuralReady && neuralState === 'none' && (state.voiceMode || 'neural') === 'neural') {
+      return buildNeural(true).then(function () { return speakAs(text, onLevel); });
+    }
     if ((state.voiceMode || 'neural') === 'neural' && neuralState === 'ready') {
       return neural().then(function (m) { return m.speak(text, onLevel); }).catch(function () {
         return ZoopeVoice.speak(text, state.voice, onLevel);
@@ -1308,13 +1318,13 @@
   renderMeetings();
   renderProfile();
   if (voiceSample) $('scanVoiceStatus').textContent = 'Voice scanned. You can scan again at any time.';
-  renderVoice(voiceSample ? (IS_PHONE ? PHONE_VOICE_MSG : state.neuralReady ? 'Loading your voice…' : 'Next, make your voice from this recording.') : null);
+  renderVoice(voiceSample ? (state.neuralReady ? (IS_PHONE ? 'Your voice is made. It loads when zoope first speaks.' : 'Loading your voice…') : IS_PHONE ? PHONE_VOICE_MSG : 'Next, make your voice from this recording.') : null);
   // the model was downloaded before: rebuild the voice in the background
   // reload the voice in the background, except on phones (too heavy to do unasked) or after a crash
   if (neuralCrashed()) {
     markBuilding(false);
     neuralState = 'error';
     renderVoice('Making your voice closed this tab last time, most likely because the device ran out of memory. Try it on a computer. Until then zoope uses the browser voice tuned to your pitch and pace, which is not your voice.');
-  } else if (voiceSample && state.neuralReady && !LOW_MEMORY) buildNeural(true);
+  } else if (voiceSample && state.neuralReady && !IS_PHONE) buildNeural(true);
   go(routeFromHash(), true);
 })();
