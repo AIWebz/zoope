@@ -1,9 +1,11 @@
 /*
  * 3D avatar generation, all on-device.
  *
- * Builds a real 3D head from a face scan: the 478 MediaPipe landmarks (with
- * depth) become a textured face surface, which is closed into a full head by a
- * skull shell stitched to the face outline, then given a neck and shoulders.
+ * Builds a real 3D head from a four-view head scan (front, right, left, back).
+ * The 478 MediaPipe landmarks (with depth) become the face surface; a skull
+ * shell sized from the measured head outline closes it into a full head, and
+ * each part is textured from the capture that saw it best. A neck and
+ * shoulders complete the bust.
  * The model is rendered with WebGL (three.js), animated (jaw, lips, blinks,
  * head motion) and can be exported as a .glb file.
  */
@@ -69,9 +71,31 @@ function slerp(a, b, t) {
   return a.clone().multiplyScalar(Math.cos(theta)).add(rel.multiplyScalar(Math.sin(theta)));
 }
 
+/* ------------------------------ texture atlas ------------------------------ */
+// One texture holds every capture, so the whole head renders with one material.
+//   tile 0: front photo, cleaned outside the face outline (for the face surface)
+//   tile 1: front photo, untouched (for the hairline and crown)
+//   tile 2: right side · tile 3: left side · tile 4: back
+const TILE = 512, ATLAS_COLS = 3, ATLAS_ROWS = 2;
+const TILES = { faceClean: 0, front: 1, right: 2, left: 3, back: 4 };
+
+function tileUV(tile, px, py, size) {
+  const tx = (tile % ATLAS_COLS) * TILE, ty = Math.floor(tile / ATLAS_COLS) * TILE;
+  return [(tx + (px / size) * TILE) / (TILE * ATLAS_COLS), 1 - (ty + (py / size) * TILE) / (TILE * ATLAS_ROWS)];
+}
+
+// Views of the head, as directions from the head towards the camera, and the
+// rotation (about the vertical axis) that turns each view to face the camera.
+const VIEWS = {
+  front: { dir: new THREE.Vector3(0, 0, 1), angle: 0 },
+  right: { dir: new THREE.Vector3(1, 0, 0), angle: -Math.PI / 2 },
+  left: { dir: new THREE.Vector3(-1, 0, 0), angle: Math.PI / 2 },
+  back: { dir: new THREE.Vector3(0, 0, -1), angle: Math.PI }
+};
+
 /* ------------------------------ model building ------------------------------ */
-// Turns a scanned face into a description of the head: positions, uvs, triangles,
-// animation weights and sampled colours. Cached per face.
+// Turns a scan into a description of the head: positions, uvs, triangles,
+// measured shape, animation weights and colours. Cached per face.
 const specCache = new WeakMap();
 
 function buildSpec(face, img) {
@@ -92,8 +116,8 @@ function buildSpec(face, img) {
     pos[i * 3] = (p[i][0] - cx) / S;
     pos[i * 3 + 1] = -(p[i][1] - cy) / S;
     pos[i * 3 + 2] = -z[i] / S;
-    uv[i * 2] = p[i][0] / SIZE;
-    uv[i * 2 + 1] = 1 - p[i][1] / SIZE;
+    const t = tileUV(TILES.faceClean, p[i][0], p[i][1], SIZE);
+    uv[i * 2] = t[0]; uv[i * 2 + 1] = t[1];
   }
 
   // triangulate the face surface, leaving the mouth opening as a hole
@@ -106,7 +130,11 @@ function buildSpec(face, img) {
     if (area < 0.3) return;
     const gx = (a[0] + b[0] + c[0]) / 3, gy = (a[1] + b[1] + c[1]) / 3;
     // the lips' opening is rebuilt below as a grid, so it can split cleanly along the lip line
-    if (!insidePolygon(gx, gy, lipPoly)) tris.push(t);
+    if (insidePolygon(gx, gy, lipPoly)) return;
+    // wind every triangle so its normal points out of the face (toward +z)
+    const ax = pos[t[0] * 3], ay = pos[t[0] * 3 + 1];
+    const cross = (pos[t[1] * 3] - ax) * (pos[t[2] * 3 + 1] - ay) - (pos[t[1] * 3 + 1] - ay) * (pos[t[2] * 3] - ax);
+    tris.push(cross < 0 ? [t[0], t[2], t[1]] : t);
   });
   // mouth-interior grid in photo space; rows meet exactly at the lip line
   const lx = Math.min(...lipPoly.map((q) => q[0])) - 2, rx = Math.max(...lipPoly.map((q) => q[0])) + 2;
@@ -142,57 +170,82 @@ function buildSpec(face, img) {
     jaw[i] = Math.max(0, wx) * (0.75 + 0.25 * t);
   }
 
-  // colours sampled from the photo
+  // colours sampled from the photo; hair from the segmentation when the scan measured it
   const sample = sampler(img);
   const skin = sample(p[205][0] - 6, p[205][1] - 6, p[205][0] + 6, p[205][1] + 6)
     .lerp(sample(p[425][0] - 6, p[425][1] - 6, p[425][0] + 6, p[425][1] + 6), 0.5);
-  const dist = (a, b) => Math.hypot(a.r - b.r, a.g - b.g, a.b - b.b);
-  // hair is usually the darker part of the band above the forehead
-  const hair = sample(top[0] - faceW * 0.2, top[1] - faceH * 0.2, top[0] + faceW * 0.2, top[1] - faceH * 0.06, 0.3);
-  const bg = sample(0, 0, SIZE * 0.08, SIZE * 0.3).lerp(sample(SIZE * 0.92, 0, SIZE, SIZE * 0.3), 0.5);
-  // hair that matches the skin or the background means very short hair: use a dark crop
-  const shortHair = dist(hair, skin) < 0.12 || dist(hair, bg) < 0.1;
-  const bald = false;
-  // clothing: both shoulders, just below the jaw line, kept inside the photo
+  const head = face.head || {};
+  const rgb = (a) => new THREE.Color().setRGB(a[0] / 255, a[1] / 255, a[2] / 255, THREE.SRGBColorSpace);
+  const hair = head.hairRgb ? rgb(head.hairRgb)
+    : sample(top[0] - faceW * 0.2, top[1] - faceH * 0.2, top[0] + faceW * 0.2, top[1] - faceH * 0.06, 0.3);
   const shY = Math.min(SIZE * 0.93, chin[1] + faceH * 0.42);
   const shirt = sample(cx - faceW * 0.95, shY - 8, cx - faceW * 0.55, shY + 8)
     .lerp(sample(cx + faceW * 0.55, shY - 8, cx + faceW * 0.95, shY + 8), 0.5);
   const ovalColors = FACE_OVAL.map((i) => {
-    // step slightly inside the outline so the colour is face/hair, not background
     const x = p[i][0] + (cx - p[i][0]) * 0.06, y = p[i][1] + (cy - p[i][1]) * 0.06;
     return sample(x - 3, y - 3, x + 3, y + 3);
   });
 
+  // shape measured by the scan (null when a step is missing or the reading is implausible)
+  const chinY = pos[152 * 3 + 1];
+  const crownY = head.crownPx > 2 ? (cy - head.crownPx) / S : null;
+  const width = head.widthPx ? head.widthPx / S : null;
+  let depth = null;
+  const views = face.views || {};
+  const sideDepths = ['right', 'left'].filter((k) => views[k] && views[k].box && crownY != null).map((k) => {
+    const b = views[k].box;
+    const scale = (b.bottom - b.top) / (crownY - chinY); // crop px per head unit in that photo
+    return (b.right - b.left) / scale;
+  });
+  if (sideDepths.length) depth = sideDepths.reduce((a, b) => a + b, 0) / sideDepths.length;
+
   const spec = {
-    n, pos, uv, tris, mouthTris, toHead, SIZE, mouthOpenInPhoto, jaw, S,
+    n, pos, uv, tris, mouthTris, toHead, SIZE, mouthOpenInPhoto, jaw, S, cx, cy,
     mouth: { x: (pos[78 * 3] + pos[308 * 3]) / 2, y: (pos[13 * 3 + 1] + pos[14 * 3 + 1]) / 2, z: Math.min(pos[13 * 3 + 2], pos[14 * 3 + 2]), w: Math.abs(pos[308 * 3] - pos[78 * 3]) },
     eyes: FM.EYES.map((e) => ({
       upper: e.upper,
       lowerY: e.lower.reduce((s, i) => s + pos[i * 3 + 1], 0) / e.lower.length,
       lowerZ: e.lower.reduce((s, i) => s + pos[i * 3 + 2], 0) / e.lower.length
     })),
-    chinY: pos[152 * 3 + 1],
-    colors: { skin, hair: shortHair ? skin.clone().lerp(new THREE.Color(0.09, 0.07, 0.06), 0.72) : hair, shirt, oval: ovalColors, bald }
+    chinY,
+    measured: { crownY, width, depth },
+    views: Object.keys(views).filter((k) => views[k] && views[k].photo),
+    colors: { skin, hair, shirt, oval: ovalColors }
   };
   specCache.set(face, spec);
   return spec;
 }
 
-// skull shell: rings sweep from the face outline over and behind the head
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+// Skull shell: rings sweep from the face outline over and behind the head.
+// Its size comes from the scan when measured (crown height, head width, head depth).
 function buildShell(spec) {
   const ring0 = FACE_OVAL.map((i) => new THREE.Vector3(spec.pos[i * 3], spec.pos[i * 3 + 1], spec.pos[i * 3 + 2]));
   const minX = Math.min(...ring0.map((v) => v.x)), maxX = Math.max(...ring0.map((v) => v.x));
   const meanZ = ring0.reduce((s, v) => s + v.z, 0) / ring0.length;
+  let noseZ = -Infinity;
+  for (let i = 0; i < spec.n; i++) noseZ = Math.max(noseZ, spec.pos[i * 3 + 2]);
+
   const C = new THREE.Vector3((minX + maxX) / 2, 0.12, meanZ - 0.3);
   const R = new THREE.Vector3((maxX - minX) / 2 * 1.12, 0.67, 0.64);
+  const m = spec.measured;
+  if (m.width) R.x = clamp(m.width / 2 / 1.03, R.x * 0.85, R.x * 1.3);
+  if (m.crownY) R.y = clamp((m.crownY - C.y) / 1.04, 0.5, 0.9);
+  if (m.depth) {
+    const D = clamp(m.depth, 0.95, 1.5);
+    R.z = clamp(D * 0.47, 0.5, 0.8);
+    C.z = noseZ - D + R.z;
+  }
+
   const back = new THREE.Vector3(0, 0.3, -1).normalize();
-  const m = ring0.length;
+  const count = ring0.length;
   const positions = [], colors = [], index = [];
   const hair = spec.colors.hair, skinDark = spec.colors.skin.clone().multiplyScalar(0.82);
 
   for (let k = 0; k <= SHELL_RINGS; k++) {
     const t = k / SHELL_RINGS;
-    for (let i = 0; i < m; i++) {
+    for (let i = 0; i < count; i++) {
       let v;
       if (k === 0) v = ring0[i];
       else {
@@ -202,7 +255,6 @@ function buildShell(spec) {
         const s = slerp(d, back, t);
         const ease = Math.min(1, t * 2.5), smooth = ease * ease * (3 - 2 * ease);
         const radial = f + (1 - f) * smooth; // start on the outline, settle onto the skull
-        // a little extra volume for hair on the crown
         const puff = 1 + 0.08 * Math.max(0, s.y) * Math.sin(Math.PI * Math.min(1, t * 1.4));
         v = C.clone().add(s.clone().multiply(R).multiplyScalar(puff * radial));
         v.x = C.x + (v.x - C.x) * (1 + 0.1 * Math.max(0, s.y)); // fuller temples and crown
@@ -210,43 +262,156 @@ function buildShell(spec) {
       positions.push(v.x, v.y, v.z);
       const dir = ring0[i].clone().sub(C).normalize();
       const target = dir.y > -0.25 ? hair : skinDark;
-      // the top of the face outline is the hairline, so hair starts right away there
       const speed = dir.y > 0.35 ? 9 : 2.4;
       const c = spec.colors.oval[i].clone().lerp(target, Math.min(1, t * speed));
       colors.push(c.r, c.g, c.b);
     }
   }
   for (let k = 0; k < SHELL_RINGS; k++) {
-    for (let i = 0; i < m; i++) {
-      const a = k * m + i, b = k * m + (i + 1) % m, c = (k + 1) * m + i, d = (k + 1) * m + (i + 1) % m;
+    for (let i = 0; i < count; i++) {
+      const a = k * count + i, b = k * count + (i + 1) % count, c = (k + 1) * count + i, d = (k + 1) * count + (i + 1) % count;
       index.push(a, c, b, b, c, d);
     }
   }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-  geo.setIndex(index);
-  geo.computeVertexNormals();
-  return { geo, center: C, radii: R };
+  return { positions: new Float32Array(positions), colors: new Float32Array(colors), index, center: C, radii: R, ringSize: count };
 }
 
-function buildHead(spec, texture) {
+// Maps a head-space point into a captured photo (crop pixels), for each view.
+// Side and back photos are aligned by fitting the model's silhouette to the
+// head outline found in the photo.
+function makeProjectors(spec, shell, faceInfo) {
+  const proj = {
+    front: (v) => [spec.cx + v.x * spec.S, spec.cy - v.y * spec.S]
+  };
+  const all = [];
+  for (let i = 0; i < spec.n; i++) all.push([spec.pos[i * 3], spec.pos[i * 3 + 1], spec.pos[i * 3 + 2]]);
+  for (let i = 0; i < shell.positions.length; i += 3) all.push([shell.positions[i], shell.positions[i + 1], shell.positions[i + 2]]);
+  const ymax = Math.max(...all.map((q) => q[1]));
+  ['right', 'left', 'back'].forEach((k) => {
+    const view = faceInfo.views && faceInfo.views[k];
+    if (!view || !view.box) return;
+    const a = VIEWS[k].angle, ca = Math.cos(a), sa = Math.sin(a);
+    const xs = all.map((q) => q[0] * ca + q[2] * sa);
+    const xmin = Math.min(...xs), xmax = Math.max(...xs);
+    const b = view.box, s = (b.right - b.left) / (xmax - xmin);
+    proj[k] = (v) => [b.left + (v.x * ca + v.z * sa - xmin) * s, b.top + (ymax - v.y) * s];
+  });
+  return proj;
+}
+
+// How much each view should contribute at a surface point with normal n.
+function viewWeights(n, available, sharp) {
+  const w = [0, 0, 0, 0];
+  ['front', 'right', 'left', 'back'].forEach((k, i) => {
+    if (!available.includes(k)) return;
+    const d = n.dot(VIEWS[k].dir);
+    w[i] = d > 0.1 ? Math.pow(d - 0.1, sharp) : 0;
+  });
+  return w;
+}
+
+// Standard (lit) material whose colour blends up to four photos of the atlas
+// by per-vertex weights, falling back to a per-vertex colour where no photo saw
+// the surface.
+function blendMaterial(texture) {
+  const mat = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0, side: THREE.DoubleSide });
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.atlas = { value: texture };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        attribute vec2 uvF; attribute vec2 uvR; attribute vec2 uvL; attribute vec2 uvB;
+        attribute vec4 vw; attribute vec3 vcol;
+        varying vec2 vUvF; varying vec2 vUvR; varying vec2 vUvL; varying vec2 vUvB;
+        varying vec4 vW; varying vec3 vCol;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vUvF = uvF; vUvR = uvR; vUvL = uvL; vUvB = uvB; vW = vw; vCol = vcol;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        uniform sampler2D atlas;
+        varying vec2 vUvF; varying vec2 vUvR; varying vec2 vUvL; varying vec2 vUvB;
+        varying vec4 vW; varying vec3 vCol;`)
+      .replace('#include <map_fragment>', `
+        float wsum = vW.x + vW.y + vW.z + vW.w;
+        vec3 tex = texture2D(atlas, vUvF).rgb * vW.x + texture2D(atlas, vUvR).rgb * vW.y
+                 + texture2D(atlas, vUvL).rgb * vW.z + texture2D(atlas, vUvB).rgb * vW.w;
+        tex /= max(wsum, 1e-4);
+        diffuseColor.rgb = mix(vCol, tex, clamp(wsum * 3.0, 0.0, 1.0));`);
+  };
+  return mat;
+}
+
+// Fills the view attributes (uvs + weights) of a geometry from its rest positions/normals.
+function addViewAttributes(geo, pts, normals, proj, available, opts) {
+  const count = pts.length / 3;
+  const uvs = { F: new Float32Array(count * 2), R: new Float32Array(count * 2), L: new Float32Array(count * 2), B: new Float32Array(count * 2) };
+  const vw = new Float32Array(count * 4);
+  const v = new THREE.Vector3(), nrm = new THREE.Vector3();
+  for (let i = 0; i < count; i++) {
+    v.set(pts[i * 3], pts[i * 3 + 1], pts[i * 3 + 2]);
+    nrm.set(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]).normalize();
+    const w = viewWeights(nrm, available, opts.sharp);
+    if (opts.frontBoost) w[0] = Math.max(w[0] * opts.frontBoost, opts.frontFloor || 0);
+    if (opts.frontOK && !opts.frontOK(v)) w[0] = 0;
+    [['F', 'front'], ['R', 'right'], ['L', 'left'], ['B', 'back']].forEach(([key, view], k) => {
+      if (!proj[view]) { w[k] = 0; return; }
+      const px = view === 'front' && opts.frontUV ? null : proj[view](v);
+      const t = px ? tileUV(view === 'front' ? TILES.front : TILES[view], px[0], px[1], opts.SIZE)
+        : [opts.frontUV[i * 2], opts.frontUV[i * 2 + 1]];
+      uvs[key][i * 2] = t[0]; uvs[key][i * 2 + 1] = t[1];
+    });
+    vw.set(w, i * 4);
+  }
+  geo.setAttribute('uvF', new THREE.BufferAttribute(uvs.F, 2));
+  geo.setAttribute('uvR', new THREE.BufferAttribute(uvs.R, 2));
+  geo.setAttribute('uvL', new THREE.BufferAttribute(uvs.L, 2));
+  geo.setAttribute('uvB', new THREE.BufferAttribute(uvs.B, 2));
+  geo.setAttribute('vw', new THREE.BufferAttribute(vw, 4));
+}
+
+function buildHead(spec, texture, faceInfo) {
   const group = new THREE.Group();
   group.name = 'zoope-avatar';
+  const available = ['front'].concat(spec.views.filter((k) => VIEWS[k]));
+  const hasSides = available.includes('right') || available.includes('left');
+  const blendMat = blendMaterial(texture);
+  const plainMat = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.78, metalness: 0, side: THREE.DoubleSide });
 
-  // face surface
+  const shell = buildShell(spec);
+  const proj = makeProjectors(spec, shell, faceInfo);
+
+  // face surface (indexed, smooth); its vertices are animated in pose()
   const faceGeo = new THREE.BufferGeometry();
   faceGeo.setAttribute('position', new THREE.BufferAttribute(spec.pos.slice(), 3));
-  faceGeo.setAttribute('uv', new THREE.BufferAttribute(spec.uv, 2));
   faceGeo.setIndex(spec.tris.flat());
   faceGeo.computeVertexNormals();
-  const faceMat = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.78, metalness: 0, side: THREE.DoubleSide });
-  const faceMesh = new THREE.Mesh(faceGeo, faceMat);
+  faceGeo.setAttribute('uv', new THREE.BufferAttribute(spec.uv, 2));
+  // where no photo faces a steep part of the face, fall back to the person's own skin tone
+  const skinLin = spec.colors.skin, faceCol = new Float32Array(spec.n * 3);
+  for (let i = 0; i < spec.n; i++) faceCol.set([skinLin.r, skinLin.g, skinLin.b], i * 3);
+  faceGeo.setAttribute('vcol', new THREE.BufferAttribute(faceCol, 3));
+  // the front photo dominates the face; side photos take over only on steep cheeks
+  addViewAttributes(faceGeo, spec.pos, faceGeo.attributes.normal.array, proj, available, { sharp: 3, frontBoost: 6, frontFloor: 0.08, frontUV: spec.uv, SIZE: spec.SIZE });
+  const faceMesh = new THREE.Mesh(faceGeo, blendMat);
   faceMesh.name = 'face';
 
-  // head shell, neck and shoulders
-  const shell = buildShell(spec);
-  const shellMesh = new THREE.Mesh(shell.geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, side: THREE.DoubleSide }));
+  // skull: blended from whichever captures saw it, plain hair/skin colour where none did
+  const shellGeo = new THREE.BufferGeometry();
+  shellGeo.setAttribute('position', new THREE.BufferAttribute(shell.positions.slice(), 3));
+  shellGeo.setIndex(shell.index);
+  shellGeo.computeVertexNormals();
+  const ellN = new Float32Array(shell.positions.length);
+  for (let i = 0; i < shell.positions.length; i += 3) {
+    const n = new THREE.Vector3(shell.positions[i], shell.positions[i + 1], shell.positions[i + 2])
+      .sub(shell.center).divide(shell.radii).divide(shell.radii).normalize();
+    ellN[i] = n.x; ellN[i + 1] = n.y; ellN[i + 2] = n.z;
+  }
+  shellGeo.setAttribute('vcol', new THREE.BufferAttribute(shell.colors, 3));
+  addViewAttributes(shellGeo, shell.positions, ellN, proj, available, {
+    sharp: 2, SIZE: spec.SIZE,
+    // the front photo only helps where it shows the head (hairline, temples), not below the chin
+    frontOK: (v) => { const px = proj.front(v); return v.y > spec.chinY + 0.1 && px[0] > 2 && px[0] < spec.SIZE - 2 && px[1] > 2; }
+  });
+  const shellMesh = new THREE.Mesh(shellGeo, blendMat);
   shellMesh.name = 'head';
 
   const skin = spec.colors.skin;
@@ -263,21 +428,21 @@ function buildHead(spec, texture) {
 
   // the photo's own mouth interior, split so the jaw can open it
   const mouthPieces = [false, true].map((lower) => {
-    const list = spec.mouthTris.filter((m) => m.lower === lower);
+    const list = spec.mouthTris.filter((mt) => mt.lower === lower);
     if (!list.length) return null;
     const verts = [], uvs = [];
     list.forEach(({ quad }) => [0, 1, 2, 0, 2, 3].forEach((k) => {
       const q = quad[k], h = spec.toHead(q[0], q[1]);
       verts.push(h[0], h[1], h[2]);
-      uvs.push(q[0] / spec.SIZE, 1 - q[1] / spec.SIZE);
+      uvs.push(...tileUV(TILES.faceClean, q[0], q[1], spec.SIZE));
     }));
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     g.computeVertexNormals();
-    const meshPiece = new THREE.Mesh(g, faceMat);
-    meshPiece.userData = { lower, rest: Float32Array.from(verts) };
-    return meshPiece;
+    const piece = new THREE.Mesh(g, plainMat);
+    piece.userData = { lower, rest: Float32Array.from(verts) };
+    return piece;
   }).filter(Boolean);
 
   // inside of the mouth, seen through the lip opening
@@ -292,24 +457,24 @@ function buildHead(spec, texture) {
   lowerTeeth.position.set(mo.x, mo.y - 0.03, mo.z - 0.05);
   lowerTeeth.userData.rest = lowerTeeth.position.clone();
 
-  // ears
-  const earMat = new THREE.MeshStandardMaterial({ color: skin.clone().multiplyScalar(0.93), roughness: 0.85 });
-  const ears = [234, 454].map((idx, k) => {
-    const ear = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), earMat);
-    ear.scale.set(0.045, 0.13, 0.085);
-    const sx = spec.pos[idx * 3], sy = spec.pos[idx * 3 + 1], sz = spec.pos[idx * 3 + 2];
-    ear.position.set(sx + (k ? -0.01 : 0.01), sy + 0.02, sz - 0.2);
-    ear.rotation.y = k ? -0.35 : 0.35;
-    return ear;
-  });
-
   const head = new THREE.Group();
-  head.add(faceMesh, shellMesh, cavity, ...ears, ...mouthPieces);
+  head.add(faceMesh, shellMesh, cavity, ...mouthPieces);
+  // simple ears only when no side photo shows the real ones
+  if (!hasSides) {
+    const earMat = new THREE.MeshStandardMaterial({ color: skin.clone().multiplyScalar(0.93), roughness: 0.85 });
+    [234, 454].forEach((idx, k) => {
+      const ear = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), earMat);
+      ear.scale.set(0.045, 0.13, 0.085);
+      ear.position.set(spec.pos[idx * 3] + (k ? -0.01 : 0.01), spec.pos[idx * 3 + 1] + 0.02, spec.pos[idx * 3 + 2] - 0.2);
+      ear.rotation.y = k ? -0.35 : 0.35;
+      head.add(ear);
+    });
+  }
   // drawn teeth only when the photo's mouth was closed (otherwise the real teeth show)
   if (!spec.mouthOpenInPhoto) head.add(upperTeeth, lowerTeeth);
   head.position.y = 0.04;
   group.add(torso, neck, head);
-  return { group, head, faceMesh, shellMesh, lowerTeeth, mouthPieces };
+  return { group, head, faceMesh, shellMesh, plainMat, ringSize: shell.ringSize, lowerTeeth, mouthPieces, available };
 }
 
 /* -------------------------------- animation -------------------------------- */
@@ -368,6 +533,34 @@ function pose(spec, parts, mouth, blink) {
   parts.lowerTeeth.rotation.x = theta;
 }
 
+// For export: glTF can't carry the blending shader, so bake each blended mesh
+// to vertex colours sampled from the atlas (the face keeps its front photo texture).
+function bakeForExport(parts, atlas) {
+  const ctx = atlas.getContext('2d'), W = atlas.width, H = atlas.height;
+  const data = ctx.getImageData(0, 0, W, H).data;
+  const at = (u, v) => {
+    const x = Math.min(W - 1, Math.max(0, Math.round(u * W))), y = Math.min(H - 1, Math.max(0, Math.round((1 - v) * H)));
+    const i = (y * W + x) * 4;
+    return new THREE.Color().setRGB(data[i] / 255, data[i + 1] / 255, data[i + 2] / 255, THREE.SRGBColorSpace);
+  };
+  const g = parts.shellMesh.geometry, n = g.attributes.position.count, out = new Float32Array(n * 3);
+  const keys = ['uvF', 'uvR', 'uvL', 'uvB'];
+  for (let i = 0; i < n; i++) {
+    const w = [0, 1, 2, 3].map((k) => g.attributes.vw.array[i * 4 + k]), sum = w.reduce((a, b) => a + b, 0);
+    const base = new THREE.Color(g.attributes.vcol.array[i * 3], g.attributes.vcol.array[i * 3 + 1], g.attributes.vcol.array[i * 3 + 2]);
+    if (sum > 0) {
+      const c = new THREE.Color(0, 0, 0);
+      keys.forEach((k, j) => { if (w[j]) c.add(at(g.attributes[k].array[i * 2], g.attributes[k].array[i * 2 + 1]).multiplyScalar(w[j] / sum)); });
+      base.lerp(c, Math.min(1, sum * 3));
+    }
+    out.set([base.r, base.g, base.b], i * 3);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(out, 3));
+  parts.shellMesh.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
+  parts.faceMesh.material = parts.plainMat;
+  [parts.shellMesh.geometry, parts.faceMesh.geometry].forEach((geo) => keys.concat(['vw', 'vcol']).forEach((k) => geo.deleteAttribute(k)));
+}
+
 /* --------------------------------- public --------------------------------- */
 
 export function has3D(face) {
@@ -381,9 +574,9 @@ export function supported() {
   } catch (e) { return false; }
 }
 
-// Paints everything outside the face outline with nearby skin and hair colours,
-// so the edges of the 3D face never pick up background, ears or collar.
-function cleanTexture(face, img) {
+// Paints everything outside the face outline with skin colour, so the edges of
+// the 3D face never pick up background, ears or collar.
+function cleanFront(face, img) {
   const FM = mesh(), p = face.points, SIZE = FM.SIZE;
   const c = document.createElement('canvas');
   c.width = img.width; c.height = img.height;
@@ -391,20 +584,18 @@ function cleanTexture(face, img) {
   ctx.drawImage(img, 0, 0);
   const sample = sampler(img);
   const skin = sample(p[205][0] - 6, p[205][1] - 6, p[205][0] + 6, p[205][1] + 6);
-  const css = (col) => '#' + col.getHexString(THREE.SRGBColorSpace);
   const cx = (p[454][0] + p[234][0]) / 2, cy = (p[10][1] + p[152][1]) / 2;
   const scale = img.width / SIZE;
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, 0, c.width, c.height);
   FACE_OVAL.forEach((i, k) => {
-    // pull the outline in a touch so the boundary texels are certainly face
     const x = (p[i][0] + (cx - p[i][0]) * 0.03) * scale, y = (p[i][1] + (cy - p[i][1]) * 0.03) * scale;
     if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   });
   ctx.closePath();
   ctx.clip('evenodd');
-  ctx.fillStyle = css(skin);
+  ctx.fillStyle = '#' + skin.getHexString(THREE.SRGBColorSpace);
   ctx.fillRect(0, 0, c.width, c.height);
   ctx.restore();
   return c;
@@ -412,11 +603,23 @@ function cleanTexture(face, img) {
 
 async function texturize(face) {
   const img = await loadImage(face.photo);
-  const texture = new THREE.Texture(cleanTexture(face, img));
+  const atlas = document.createElement('canvas');
+  atlas.width = TILE * ATLAS_COLS; atlas.height = TILE * ATLAS_ROWS;
+  const ctx = atlas.getContext('2d');
+  ctx.fillStyle = '#808080';
+  ctx.fillRect(0, 0, atlas.width, atlas.height);
+  const put = (tile, src) => ctx.drawImage(src, (tile % ATLAS_COLS) * TILE, Math.floor(tile / ATLAS_COLS) * TILE, TILE, TILE);
+  put(TILES.faceClean, cleanFront(face, img));
+  put(TILES.front, img);
+  const views = face.views || {};
+  for (const k of ['right', 'left', 'back']) {
+    if (views[k] && views[k].photo) put(TILES[k], await loadImage(views[k].photo));
+  }
+  const texture = new THREE.CanvasTexture(atlas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 4;
   texture.needsUpdate = true;
-  return { img, texture };
+  return { img, texture, atlas };
 }
 
 /*
@@ -449,7 +652,7 @@ export function attach(canvas, face, getLevel, opts = {}) {
   texturize(face).then(({ img, texture }) => {
     if (stopped) return;
     const spec = buildSpec(face, img);
-    const parts = buildHead(spec, texture);
+    const parts = buildHead(spec, texture, face);
 
     renderer = new THREE.WebGLRenderer({ canvas: gl, antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -460,9 +663,9 @@ export function attach(canvas, face, getLevel, opts = {}) {
     scene.add(new THREE.HemisphereLight(0xffffff, 0x6b6b78, 1.5));
     const key = new THREE.DirectionalLight(0xffffff, 1.5);
     key.position.set(0.8, 1.1, 2.2);
-    const rim = new THREE.DirectionalLight(0xbcd2ff, 0.9);
-    rim.position.set(-1.6, 0.6, -1.4);
-    scene.add(key, rim);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.9);
+    fill.position.set(-1.2, 0.8, -2.0);
+    scene.add(key, fill);
 
     const camera = new THREE.PerspectiveCamera(22, 1, 0.1, 50);
     const frameY = opts.frame === 'bust' ? -0.32 : -0.08;
@@ -480,7 +683,11 @@ export function attach(canvas, face, getLevel, opts = {}) {
     ro.observe(gl);
     resize();
 
-    // drag to turn the head
+    // how far the head may turn depends on which sides were actually scanned
+    const sides = parts.available.includes('right') && parts.available.includes('left');
+    const full = sides && parts.available.includes('back');
+    const limit = full ? Infinity : sides ? 1.3 : 0.45;
+
     let dragYaw = 0, dragPitch = 0, dragging = false, lastX = 0, lastY = 0;
     if (opts.interactive) {
       gl.style.cursor = 'grab';
@@ -488,7 +695,7 @@ export function attach(canvas, face, getLevel, opts = {}) {
       gl.addEventListener('pointerdown', (e) => { dragging = true; lastX = e.clientX; lastY = e.clientY; gl.setPointerCapture(e.pointerId); gl.style.cursor = 'grabbing'; });
       gl.addEventListener('pointermove', (e) => {
         if (!dragging) return;
-        dragYaw = Math.max(-0.45, Math.min(0.45, dragYaw + (e.clientX - lastX) * 0.008));
+        dragYaw = Math.max(-limit, Math.min(limit, dragYaw + (e.clientX - lastX) * 0.01));
         dragPitch = Math.max(-0.4, Math.min(0.4, dragPitch + (e.clientY - lastY) * 0.008));
         lastX = e.clientX; lastY = e.clientY;
       });
@@ -509,17 +716,23 @@ export function attach(canvas, face, getLevel, opts = {}) {
         if (t >= 1) blinkAt = now + 2400 + Math.random() * 3200;
       }
       pose(spec, parts, mouth, blink);
-      if (!dragging) { dragYaw *= 0.96; dragPitch *= 0.96; }
+      // after a drag the head eases back to facing the viewer (unless fully scanned)
+      if (!dragging) {
+        if (full) dragYaw = Math.atan2(Math.sin(dragYaw), Math.cos(dragYaw)) * 0.97;
+        else dragYaw *= 0.96;
+        dragPitch *= 0.96;
+      }
       const s = now / 1000;
-      parts.head.rotation.y = Math.sin(s * 0.45) * 0.14 + dragYaw + (opts.yaw || 0);
+      // dragging turns the whole bust like a turntable; the head adds a small idle sway
+      parts.group.rotation.y = dragYaw + (opts.yaw || 0);
+      parts.head.rotation.y = Math.sin(s * 0.45) * 0.14;
       parts.head.rotation.x = Math.sin(s * 0.37) * 0.035 - mouth * 0.04 + dragPitch;
       parts.head.rotation.z = Math.sin(s * 0.29) * 0.025;
-      parts.group.rotation.y = dragYaw * 0.35;
       renderer.render(scene, camera);
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
-    if (opts.onReady) opts.onReady({ vertices: spec.n, triangles: spec.tris.length });
+    if (opts.onReady) opts.onReady({ vertices: spec.n, triangles: spec.tris.length, views: parts.available, measured: spec.measured });
   }).catch((err) => { if (opts.onError) opts.onError(err); stop(); });
 
   return stop;
@@ -527,18 +740,12 @@ export function attach(canvas, face, getLevel, opts = {}) {
 
 /* Exports the avatar as a binary glTF (.glb) blob. */
 export async function exportGLB(face) {
-  const { img, texture } = await texturize(face);
+  const { img, texture, atlas } = await texturize(face);
   const spec = buildSpec(face, img);
-  const parts = buildHead(spec, texture);
+  const parts = buildHead(spec, texture, face);
+  bakeForExport(parts, atlas);
   const scene = new THREE.Scene();
   scene.add(parts.group);
   const glb = await new GLTFExporter().parseAsync(scene, { binary: true });
   return new Blob([glb], { type: 'model/gltf-binary' });
-}
-
-/* Counts for the UI. */
-export async function stats(face) {
-  const { img } = await texturize(face);
-  const spec = buildSpec(face, img);
-  return { vertices: spec.n + FACE_OVAL.length * (SHELL_RINGS + 1), triangles: spec.tris.length + FACE_OVAL.length * SHELL_RINGS * 2 };
 }

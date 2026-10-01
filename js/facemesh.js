@@ -36,15 +36,60 @@
     return landmarkerPromise;
   }
 
+  // Person-part segmentation: 0 background, 1 hair, 2 body skin, 3 face skin, 4 clothes, 5 other.
+  var segmenterPromise = null;
+  function loadSegmenter() {
+    if (!segmenterPromise) {
+      var base = new URL('vendor/', document.baseURI).href;
+      segmenterPromise = import(base + 'mediapipe/vision_bundle.mjs').then(function (vision) {
+        return vision.FilesetResolver.forVisionTasks(base + 'mediapipe/wasm').then(function (fileset) {
+          return vision.ImageSegmenter.createFromOptions(fileset, {
+            baseOptions: { modelAssetPath: base + 'models/selfie_multiclass_256x256.tflite', delegate: 'CPU' },
+            runningMode: 'IMAGE',
+            outputCategoryMask: true,
+            outputConfidenceMasks: false
+          });
+        });
+      });
+      segmenterPromise.catch(function () { segmenterPromise = null; });
+    }
+    return segmenterPromise;
+  }
+
+  /* Labels every pixel of a canvas. Resolves to { cats: Uint8Array, w, h } at the mask's own size. */
+  function segment(canvas) {
+    return loadSegmenter().then(function (seg) {
+      var res = seg.segment(canvas);
+      var mask = res.categoryMask;
+      var out = { cats: new Uint8Array(mask.getAsUint8Array()), w: mask.width, h: mask.height };
+      if (res.close) res.close();
+      return out;
+    });
+  }
+
+  /* Face landmarks on a canvas, or null. */
+  function detect(canvas) {
+    return load().then(function (landmarker) {
+      var res = landmarker.detect(canvas);
+      return res && res.faceLandmarks && res.faceLandmarks[0] || null;
+    });
+  }
+
+  /* A mirrored frame from the camera (or a copy of a canvas used as the source). */
+  function grab(source) {
+    var vw = source.videoWidth || source.width, vh = source.videoHeight || source.height;
+    var frame = document.createElement('canvas');
+    frame.width = vw; frame.height = vh;
+    var fctx = frame.getContext('2d');
+    if (source.videoWidth) { fctx.translate(vw, 0); fctx.scale(-1, 1); } // match the mirrored preview
+    fctx.drawImage(source, 0, 0, vw, vh);
+    return frame;
+  }
+
   /* Scans a video frame. Resolves to a face object, or null when no face is found. */
   function scan(video) {
     return load().then(function (landmarker) {
-      var vw = video.videoWidth, vh = video.videoHeight;
-      var frame = document.createElement('canvas');
-      frame.width = vw; frame.height = vh;
-      var fctx = frame.getContext('2d');
-      fctx.translate(vw, 0); fctx.scale(-1, 1); // match the mirrored preview
-      fctx.drawImage(video, 0, 0, vw, vh);
+      var frame = grab(video), vw = frame.width, vh = frame.height;
 
       var res = landmarker.detect(frame);
       var lm = res && res.faceLandmarks && res.faceLandmarks[0];
@@ -55,8 +100,9 @@
         minX = Math.min(minX, p.x * vw); maxX = Math.max(maxX, p.x * vw);
         minY = Math.min(minY, p.y * vh); maxY = Math.max(maxY, p.y * vh);
       });
-      var side = Math.max(maxX - minX, maxY - minY) * 1.75;
-      var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2 + (maxY - minY) * 0.04;
+      // a generous crop, shifted up, so the whole head of hair is in the photo
+      var side = Math.max(maxX - minX, maxY - minY) * 1.95;
+      var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2 - (maxY - minY) * 0.06;
       var sx = cx - side / 2, sy = cy - side / 2, k = SIZE / side;
 
       var crop = document.createElement('canvas');
@@ -77,6 +123,8 @@
         photo: crop.toDataURL('image/jpeg', 0.9),
         points: points,
         depth: depth,
+        _frame: frame,
+        _crop: { sx: sx, sy: sy, k: k },
         confidence: Math.min(1, 0.6 + faceFrac * 3)
       };
     });
@@ -294,5 +342,5 @@
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
-  global.ZoopeFaceMesh = { load: load, scan: scan, render: render, delaunay: delaunay, SIZE: SIZE, INNER_LIP_LOOP: INNER_LIP_LOOP, UPPER_LIP: UPPER_LIP, LOWER_LIP_INNER: LOWER_LIP_INNER, EYES: EYES };
+  global.ZoopeFaceMesh = { load: load, scan: scan, grab: grab, detect: detect, segment: segment, loadSegmenter: loadSegmenter, render: render, delaunay: delaunay, SIZE: SIZE, INNER_LIP_LOOP: INNER_LIP_LOOP, UPPER_LIP: UPPER_LIP, LOWER_LIP_INNER: LOWER_LIP_INNER, EYES: EYES };
 })(window);

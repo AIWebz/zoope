@@ -287,8 +287,8 @@
     score = Math.max(-1, Math.min(1.5, score));
     var speak = score >= this.threshold;
     var reply = speak ? this.respond(speaker, t, intent, hits) : null;
-    if (reply && this.history.some(function (h) { return h.ai && h.text.indexOf(reply.replace(/^(Sure\. |Quick update: |Yes — )/, '')) >= 0; })) {
-      reply = 'Just to confirm — ' + reply.charAt(0).toLowerCase() + reply.slice(1);
+    if (reply && /notes say/.test(reply) && this.history.some(function (h) { return h.ai && h.text === reply; })) {
+      reply = 'As I mentioned, ' + reply;
     }
     if (!speak) reasons.push('Staying quiet (' + score.toFixed(2) + ' < ' + this.threshold + ')');
 
@@ -318,11 +318,12 @@
     return 'statement';
   };
 
+  // Only answer from a note that clearly matches the question; a loose match could be wrong.
   ZoopeEngine.prototype.fromKnowledge = function (hits, min) {
-    var good = hits.filter(function (h) { return h.score >= (min || 0.18); });
+    var good = hits.filter(function (h) { return h.score >= (min || 0.3); });
     if (!good.length) return null;
     var out = good[0].text;
-    if (good[1] && good[1].score > good[0].score * 0.7) out += ' ' + good[1].text;
+    if (good[1] && good[1].score >= 0.3 && good[1].score > good[0].score * 0.85) out += ' ' + good[1].text;
     return out;
   };
 
@@ -331,60 +332,69 @@
     return 'follow up on that';
   };
 
+  /*
+   * Honesty rules for everything zoope says:
+   *  - it says it is an AI assistant attending for the user, never the user;
+   *  - facts come only from the user's own notes, quoted as theirs;
+   *  - it never agrees, commits or gives an opinion on the user's behalf;
+   *  - when it doesn't know, it says so and passes the question on.
+   */
   ZoopeEngine.prototype.respond = function (speaker, t, intent, hits) {
     var who = String(speaker || '').split(/\s+/)[0];
     var seed = this.turn + t.length;
-    var known = this.fromKnowledge(hits);
-    var me = this.preferred;
     var self = this;
+    var known = this.fromKnowledge(hits);
+    // a follow-up about the note zoope just read out may match it only loosely
+    if (!known && hits[0] && hits[0].score >= 0.15 && this.lastNote && this.lastNote.indexOf(hits[0].text) >= 0 && this.turn - this.lastNoteTurn <= 3) {
+      known = hits[0].text;
+    }
+    var me = this.preferred;
+    var owner = me + '\'s';
+    var notes = function (k) { self.lastNote = k; self.lastNoteTurn = self.turn; return owner + ' notes say: “' + k + '”'; };
 
     switch (intent) {
       case 'hearcheck':
-        return pick(['Yes, I can hear you clearly.', 'Loud and clear, ' + who + '.', 'Yep, I\'m here and can hear you.'], seed);
+        return pick(['Yes, I can hear you.', 'Yes, ' + who + ', I can hear you.'], seed);
       case 'intro':
         var others = this.names.filter(function (n) { return norm(n) !== norm(me) && n.indexOf(' ') < 0; }).map(capitalise);
-        return 'Hi, I\'m ' + (this.profile.fullName || me) + '. Please call me ' + me +
-          (others.length ? ' — ' + others.slice(0, 2).join(' or ') + ' works too' : '') + '.';
+        return 'I\'m zoope, an AI assistant attending for ' + (this.profile.fullName || me) + '. ' +
+          (others.length ? me + ' also goes by ' + others.slice(0, 2).join(' or ') + '. ' : '') +
+          'I can share ' + owner + ' notes and take questions back to them.';
       case 'greeting':
-        return pick(['Hi ' + who + '!', 'Hey ' + who + ', good to see you.', 'Hello everyone!'], seed);
+        return pick(['Hi ' + who + '.', 'Hello everyone.'], seed);
       case 'farewell':
-        return pick(['Thanks everyone, talk soon!', 'Thanks all — bye!', 'Great meeting, see you next time.'], seed);
+        return 'Thanks everyone. I\'ll pass a summary of this meeting to ' + me + '.';
       case 'thanks':
-        return pick(['Of course!', 'Happy to help.', 'Anytime, ' + who + '.'], seed);
+        return 'You\'re welcome.';
       case 'request':
         var dl = t.match(DEADLINE);
-        return pick(['Sure, I\'ll take that on', 'Yes, I can do that', 'Got it — I\'ll handle it'], seed) +
-          (dl ? ' ' + dl[0] : '') + '. I\'m noting it down now.' + (known ? ' For context: ' + known : '');
+        return 'I can\'t commit on ' + owner + ' behalf, but I\'ve added this to ' + owner + ' action items' +
+          (dl ? ', ' + dl[0] : '') + ', and ' + me + ' will confirm.';
       case 'availability':
-        if (known) return known;
+        if (known) return notes(known);
         this.followUp(speaker, t);
-        return 'Let me check my calendar and get back to you with times right after the meeting.';
+        return 'I don\'t have access to ' + owner + ' calendar, so I\'ll pass that question on.';
       case 'update':
-        if (known) return pick(['Sure. ', 'Quick update: ', 'Yes — '], seed) + known;
+        if (known) return notes(known);
         this.followUp(speaker, t);
-        return 'Nothing major to flag from my side right now — I\'ll send a written update after the call.';
+        return me + ' didn\'t leave me an update on that. I\'ll pass the question on.';
       case 'opinion':
-        if (known) return pick(['I think ', 'From my side, ', 'My take: '], seed) + lowerFirst(known);
+        if (known) return notes(known);
         this.followUp(speaker, t);
-        return 'Sounds reasonable to me. I\'d like to look at the details, and I\'ll share my thoughts in writing after the meeting.';
+        return 'I won\'t guess ' + owner + ' opinion. I\'ll pass the question on.';
       case 'question':
-        if (known) { this.answered++; return known; }
+        if (known) { this.answered++; return notes(known); }
         this.followUp(speaker, t);
-        return pick([
-          'Good question — I don\'t have that in front of me. I\'ll follow up after the meeting.',
-          'I\'m not sure off the top of my head, ' + who + '. Let me confirm and get back to you.',
-          'Let me double-check that and send it over after the call.'
-        ], seed);
+        return 'I don\'t know that, and I won\'t guess. I\'ll pass it to ' + me + '.';
       default:
-        if (known) return known;
-        return pick(['Got it, thanks ' + who + '.', 'Makes sense.', 'Noted, thanks.'], seed);
+        if (known) return notes(known);
+        return 'Noted. I\'ll include that in ' + owner + ' summary.';
     }
-
-    function lowerFirst(s) { return /^I\b/.test(s) ? s : s.charAt(0).toLowerCase() + s.slice(1); }
   };
 
   ZoopeEngine.prototype.greetOnJoin = function () {
-    var line = 'Hi everyone, ' + this.preferred + ' here.';
+    var line = 'Hi everyone, I\'m zoope, ' + this.preferred + '\'s AI assistant. I\'ll share ' + this.preferred +
+      '\'s notes and pass anything else on.';
     // the join greeting shouldn't count against turn-taking
     this.history.push({ turn: this.turn, speaker: this.preferred, text: line, ai: true });
     return line;

@@ -12,77 +12,128 @@
     rms = Math.sqrt(rms / n);
     if (rms < 0.01) return -1;
     var minLag = Math.floor(sampleRate / 400), maxLag = Math.floor(sampleRate / 70);
-    var best = -1, bestCorr = 0;
-    for (var lag = minLag; lag <= maxLag; lag++) {
+    var corr = new Float64Array(maxLag + 2), bestCorr = 0;
+    for (var lag = minLag; lag <= maxLag + 1; lag++) {
       var c = 0;
       for (i = 0; i < n - lag; i++) c += buf[i] * buf[i + lag];
-      c /= (n - lag);
-      if (c > bestCorr) { bestCorr = c; best = lag; }
+      corr[lag] = c / (n - lag);
+      if (lag <= maxLag && corr[lag] > bestCorr) bestCorr = corr[lag];
     }
-    if (best < 0 || bestCorr < rms * rms * 0.3) return -1;
-    return sampleRate / best;
+    if (bestCorr < rms * rms * 0.3) return -1;
+    // the first strong peak is the period; later peaks at 2x, 3x the period cause octave errors
+    for (lag = minLag + 1; lag <= maxLag; lag++) {
+      if (corr[lag] >= bestCorr * 0.88 && corr[lag] >= corr[lag - 1] && corr[lag] >= corr[lag + 1]) {
+        // refine between samples with a parabola
+        var a = corr[lag - 1], b = corr[lag], c2 = corr[lag + 1], d = a - 2 * b + c2;
+        var shift = d ? 0.5 * (a - c2) / d : 0;
+        return sampleRate / (lag + shift);
+      }
+    }
+    return -1;
   }
 
-  /* Records `seconds` of audio from a MediaStream. onLevel(0..1) for the meter. */
-  function scanVoice(stream, seconds, onLevel) {
-    return new Promise(function (resolve, reject) {
-      var AC = global.AudioContext || global.webkitAudioContext;
-      if (!AC) return reject(new Error('Web Audio is not supported in this browser.'));
-      var ac = new AC();
-      var src = ac.createMediaStreamSource(stream);
-      var an = ac.createAnalyser();
-      an.fftSize = 2048;
-      src.connect(an);
-      var buf = new Float32Array(an.fftSize);
-      var pitches = [], energies = [], start = performance.now();
+  /* ------------------------- voice scan (analysis) ------------------------- */
 
-      function tick() {
-        an.getFloatTimeDomainData(buf);
-        var rms = 0;
-        for (var i = 0; i < buf.length; i++) rms += buf[i] * buf[i];
-        rms = Math.sqrt(rms / buf.length);
-        energies.push(rms);
-        if (onLevel) onLevel(Math.min(1, rms * 8));
-        var p = autoCorrelate(buf, ac.sampleRate);
-        if (p > 0) pitches.push(p);
-        if (performance.now() - start < seconds * 1000) {
-          setTimeout(tick, 30);
-        } else {
-          src.disconnect();
-          ac.close();
-          if (onLevel) onLevel(0);
-          resolve(analyse(pitches, energies, seconds));
+  // radix-2 FFT magnitude spectrum of a frame (length must be a power of two)
+  function spectrum(frame) {
+    var n = frame.length, re = new Float64Array(n), im = new Float64Array(n), i, j, k;
+    for (i = 0; i < n; i++) re[i] = frame[i] * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1))); // Hann
+    for (i = 1, j = 0; i < n; i++) {
+      var bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j) { var t = re[i]; re[i] = re[j]; re[j] = t; }
+    }
+    for (var len = 2; len <= n; len <<= 1) {
+      var ang = -2 * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang);
+      for (i = 0; i < n; i += len) {
+        var cr = 1, ci = 0;
+        for (k = 0; k < len / 2; k++) {
+          var ar = re[i + k + len / 2] * cr - im[i + k + len / 2] * ci;
+          var ai = re[i + k + len / 2] * ci + im[i + k + len / 2] * cr;
+          re[i + k + len / 2] = re[i + k] - ar; im[i + k + len / 2] = im[i + k] - ai;
+          re[i + k] += ar; im[i + k] += ai;
+          var ncr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = ncr;
         }
       }
-      tick();
-    });
+    }
+    var mag = new Float64Array(n / 2);
+    for (i = 0; i < n / 2; i++) mag[i] = Math.sqrt(re[i] * re[i] + im[i] * im[i]);
+    return mag;
   }
 
-  function analyse(pitches, energies, seconds) {
-    if (pitches.length < 10) {
-      return { ok: false, reason: 'I could not hear enough speech. Try again a little closer to the mic.' };
+  /*
+   * Scans a recording of the user's voice and measures it: typical pitch,
+   * pitch range, speaking pace, brightness (timbre) and loudness, plus a pitch
+   * contour for display. Everything here is measured, nothing is assumed.
+   */
+  function analyzeSamples(samples, rate) {
+    var hop = Math.round(rate * 0.02), win = 1024, frames = [], i;
+    for (var start = 0; start + win <= samples.length; start += hop) {
+      var f = samples.subarray(start, start + win), rms = 0;
+      for (i = 0; i < win; i++) rms += f[i] * f[i];
+      frames.push({ start: start, rms: Math.sqrt(rms / win) });
     }
-    pitches.sort(function (a, b) { return a - b; });
-    var median = pitches[Math.floor(pitches.length / 2)];
-    var lo = pitches[Math.floor(pitches.length * 0.1)], hi = pitches[Math.floor(pitches.length * 0.9)];
+    if (!frames.length) return { ok: false, reason: 'The recording is too short.' };
+    var sorted = frames.map(function (x) { return x.rms; }).sort(function (a, b) { return a - b; });
+    var noise = sorted[Math.floor(sorted.length * 0.1)], peak = sorted[Math.floor(sorted.length * 0.98)];
+    var gate = Math.max(noise * 3, peak * 0.12, 0.004);
 
-    // syllable-ish peaks per second → speaking pace
-    var mean = energies.reduce(function (s, e) { return s + e; }, 0) / energies.length;
-    var peaks = 0, above = false;
-    energies.forEach(function (e) {
-      if (!above && e > mean * 1.25) { peaks++; above = true; } else if (above && e < mean * 0.9) { above = false; }
+    var pitches = [], contour = [], centroids = [], loud = [];
+    frames.forEach(function (fr) {
+      var f = samples.subarray(fr.start, fr.start + win);
+      if (fr.rms < gate) { contour.push(null); return; }
+      loud.push(fr.rms);
+      var p = autoCorrelate(f, rate);
+      contour.push(p > 0 ? p : null);
+      if (p > 0) pitches.push(p);
+      var mag = spectrum(f), num = 0, den = 0;
+      for (var b = 2; b < mag.length; b++) { var hz = b * rate / win; if (hz > 6000) break; num += hz * mag[b]; den += mag[b]; }
+      if (den > 0) centroids.push(num / den);
     });
-    var voiced = energies.filter(function (e) { return e > mean * 0.6; }).length * 0.03;
-    var pace = peaks / Math.max(1, voiced);
+    var voicedSeconds = loud.length * hop / rate;
+    if (pitches.length < 25 || voicedSeconds < 3) {
+      return { ok: false, reason: 'Not enough clear speech was detected. Read the passage aloud in a quiet room, a little closer to the mic.' };
+    }
+    var q = function (arr, k) { var a = arr.slice().sort(function (x, y) { return x - y; }); return a[Math.min(a.length - 1, Math.floor(a.length * k))]; };
+    var median = q(pitches, 0.5), lo = q(pitches, 0.1), hi = q(pitches, 0.9);
 
+    // syllable-like energy peaks per voiced second = speaking pace
+    var env = frames.map(function (x) { return x.rms; }), peaks = 0, armed = true;
+    for (i = 2; i < env.length - 2; i++) {
+      if (armed && env[i] > gate * 1.6 && env[i] >= env[i - 1] && env[i] >= env[i + 1] && env[i] >= env[i - 2] && env[i] >= env[i + 2]) { peaks++; armed = false; }
+      else if (env[i] < gate * 1.1) armed = true;
+    }
+    var meanLoud = loud.reduce(function (a, b) { return a + b; }, 0) / loud.length;
     return {
       ok: true,
       pitchHz: Math.round(median),
-      range: Math.round(hi - lo),
-      pace: +pace.toFixed(2),
-      loudness: +mean.toFixed(3),
-      register: median < 165 ? 'low' : 'high'
+      lowHz: Math.round(lo),
+      highHz: Math.round(hi),
+      rangeSemitones: +(12 * Math.log2(hi / lo)).toFixed(1),
+      pace: +(peaks / voicedSeconds).toFixed(1),
+      brightnessHz: Math.round(q(centroids, 0.5) || 0),
+      loudnessDb: Math.round(20 * Math.log10(meanLoud)),
+      voicedSeconds: +voicedSeconds.toFixed(1),
+      register: median < 165 ? 'low' : 'high',
+      contour: contour.filter(function (_, k) { return k % 2 === 0; })
     };
+  }
+
+  /* 16-bit PCM <-> base64, for keeping recordings in local storage */
+  function encodePCM(clip) {
+    var i16 = new Int16Array(clip.length);
+    for (var i = 0; i < clip.length; i++) i16[i] = Math.max(-32768, Math.min(32767, Math.round(clip[i] * 32767)));
+    var bytes = new Uint8Array(i16.buffer), s = '';
+    for (i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(s);
+  }
+  function decodePCM(b64) {
+    var s = atob(b64), bytes = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i);
+    var i16 = new Int16Array(bytes.buffer), out = new Float32Array(i16.length);
+    for (i = 0; i < i16.length; i++) out[i] = i16[i] / 32767;
+    return out;
   }
 
   function pickVoice(profile) {
@@ -163,5 +214,5 @@
 
   if (global.speechSynthesis) speechSynthesis.getVoices(); // warm up voice list
 
-  global.ZoopeVoice = { scanVoice: scanVoice, speak: speak, listen: listen, synthParams: synthParams };
+  global.ZoopeVoice = { analyzeSamples: analyzeSamples, encodePCM: encodePCM, decodePCM: decodePCM, speak: speak, listen: listen, synthParams: synthParams };
 })(window);

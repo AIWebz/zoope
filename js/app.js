@@ -69,15 +69,15 @@
       var key = el.dataset.platform, acct = state.platforms[key];
       var input = el.querySelector('.acct'), btn = el.querySelector('.connect-btn');
       el.classList.toggle('connected', !!acct);
-      el.querySelector('.platform-sub').textContent = acct || 'Not connected';
+      el.querySelector('.platform-sub').textContent = acct || 'Not linked';
       input.disabled = !!acct;
       if (acct) input.value = acct;
-      btn.textContent = acct ? 'Disconnect' : 'Connect';
+      btn.textContent = acct ? 'Unlink' : 'Link';
       btn.className = 'btn connect-btn ' + (acct ? 'btn-ghost' : 'btn-secondary');
     });
     var sel = $('mPlatform'), cur = sel.value;
     sel.innerHTML = Object.keys(PLATFORMS).map(function (k) {
-      return '<option value="' + k + '"' + (state.platforms[k] ? '' : ' disabled') + '>' + PLATFORMS[k].name + (state.platforms[k] ? '' : ' (not connected)') + '</option>';
+      return '<option value="' + k + '"' + (state.platforms[k] ? '' : ' disabled') + '>' + PLATFORMS[k].name + (state.platforms[k] ? '' : ' (not linked)') + '</option>';
     }).join('');
     var firstOk = Object.keys(PLATFORMS).filter(function (k) { return state.platforms[k]; })[0];
     sel.value = state.platforms[cur] ? cur : (firstOk || 'zoom');
@@ -89,13 +89,13 @@
       var key = el.dataset.platform;
       if (state.platforms[key]) {
         delete state.platforms[key];
-        toast(PLATFORMS[key].name + ' disconnected');
+        toast(PLATFORMS[key].name + ' account removed');
       } else {
         var v = input.value.trim();
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) { input.classList.add('invalid'); input.focus(); return; }
         input.classList.remove('invalid');
         state.platforms[key] = v;
-        toast(PLATFORMS[key].name + ' connected');
+        toast(PLATFORMS[key].name + ' account saved');
       }
       save(); renderPlatforms();
     }
@@ -141,14 +141,14 @@
   });
 
   var ASK = {
-    name: function () { bot('Hi, I\'m zoope. I\'ll attend meetings as you. First, what\'s your full name?'); },
+    name: function () { bot('Hi, I\'m zoope. I\'ll attend meetings for you as your AI assistant. First, what\'s your full name?'); },
     nicknames: function () {
       bot('Nice to meet you, ' + state.profile.fullName.split(' ')[0] + '. What names do people call you by? Include nicknames, short names or initials, separated by commas.');
     },
     preferred: function () { bot('Got it: ' + state.profile.names.join(', ') + '. Which one should I introduce myself with?'); },
     more: function () { bot('Any other names people use for you, like a work nickname? Type "no" if that\'s all.'); },
     done: function () {
-      bot('All set. I\'ll answer to ' + state.profile.names.join(', ') + ' and introduce myself as ' + state.profile.preferred + '. Type "change" to start over.');
+      bot('All set. I\'ll answer to ' + state.profile.names.join(', ') + ' and introduce myself as ' + state.profile.preferred + '\'s AI assistant. Type "change" to start over.');
     }
   };
 
@@ -241,16 +241,20 @@
     if (stopPreview) stopPreview();
     stopPreview = null;
     var mesh = state.face && state.face.kind === 'mesh', depth = mesh && !!state.face.depth;
-    $('avatarInfo').textContent = !state.face ? 'None yet' : depth ? 'Building 3D model…' : mesh ? 'Photo (rescan for 3D)' : 'Illustrated';
-    $('faceBadge').textContent = !state.face ? 'Not scanned' : depth ? '3D model' : mesh ? 'Photo' : 'Illustrated';
-    $('faceBadge').className = 'pill ' + (state.face ? 'pill-green pill-dot' : '');
+    $('avatarInfo').textContent = !state.face ? 'None yet' : depth ? 'Building 3D model…' : mesh ? 'Photo only (rescan for 3D)' : 'Illustrated';
+    $('avatarMeasured').textContent = '–';
     $('downloadModel').disabled = true;
     if (state.face) {
       stopPreview = ZoopeAvatar.animate($('avatarCanvas'), state.face, function () { return previewLevel; }, {
         interactive: true,
         frame: 'head',
         onReady: function (info) {
-          $('avatarInfo').textContent = '3D · ' + info.vertices + ' vertices · ' + info.triangles + ' faces';
+          $('avatarInfo').textContent = '3D from ' + info.views.length + ' of 4 views';
+          var m = info.measured, parts = [];
+          if (m.crownY != null) parts.push('crown');
+          if (m.width != null) parts.push('width');
+          if (m.depth != null) parts.push('depth');
+          $('avatarMeasured').textContent = parts.length ? 'Head ' + parts.join(', ') : 'Not yet';
           $('downloadModel').disabled = false;
           $('dragHint').classList.remove('hidden');
         },
@@ -261,6 +265,83 @@
     }
     if (!depth) $('dragHint').classList.add('hidden');
     $('testVoice').disabled = !state.face;
+    renderScanSteps();
+  }
+
+  /* ------------------------------ head scan steps ------------------------------ */
+  var SCAN_STEPS = [
+    { key: 'front', title: 'Step 1 · Face & hair', button: 'Capture front', countdown: 3,
+      text: 'Face the camera with your whole head and hair in view, in good light. Keep a neutral expression.' },
+    { key: 'right', title: 'Step 2 · Right side', button: 'Capture right side', countdown: 5,
+      text: 'Turn your head about 90° to your left, so the camera sees the right side of your head and your right ear. Keep your whole head in the frame. zoope beeps each second and captures on the last beep.' },
+    { key: 'left', title: 'Step 3 · Left side', button: 'Capture left side', countdown: 5,
+      text: 'Turn your head about 90° to your right, so the camera sees the left side of your head and your left ear. Keep your whole head in the frame.' },
+    { key: 'back', title: 'Step 4 · Back of head', button: 'Capture back', countdown: 6,
+      text: 'Turn around so the camera sees the back of your head, at about the same distance. Listen for the beeps; zoope captures on the last one.' }
+  ];
+  var scanStep = 0, scanning = false;
+
+  function stepDone(i) {
+    var f = state.face;
+    if (!f || !f.depth) return false;
+    if (i === 0) return true;
+    return !!(f.views && f.views[SCAN_STEPS[i].key]);
+  }
+  function scanCount() { var n = 0; for (var i = 0; i < 4; i++) if (stepDone(i)) n++; return n; }
+  function firstMissing() { for (var i = 0; i < 4; i++) if (!stepDone(i)) return i; return -1; }
+
+  function renderScanSteps() {
+    var f = state.face;
+    document.querySelectorAll('#scanSteps li').forEach(function (li, i) {
+      li.classList.toggle('done', stepDone(i));
+      li.classList.toggle('current', i === scanStep);
+      var photo = i === 0 ? (f && f.depth && f.photo) : (f && f.views && f.views[SCAN_STEPS[i].key] && f.views[SCAN_STEPS[i].key].photo);
+      li.querySelector('.ss-thumb').style.backgroundImage = photo ? 'url(' + photo + ')' : '';
+      li.querySelector('em').textContent = stepDone(i) ? 'Captured' : ['Front', 'Turn left', 'Turn right', 'Turn around'][i];
+    });
+    var st = SCAN_STEPS[scanStep];
+    $('scanTitle').textContent = st.title;
+    $('scanInstruction').textContent = st.text;
+    $('scanFace').querySelector('span').textContent = stepDone(scanStep) ? 'Retake ' + st.button.replace('Capture ', '') : st.button;
+    $('scanGuide').dataset.step = scanStep;
+    var n = scanCount();
+    $('faceBadge').textContent = n + ' / 4 captured';
+    $('faceBadge').className = 'pill ' + (n === 4 ? 'pill-green pill-dot' : n ? 'pill-accent' : '');
+  }
+
+  document.querySelectorAll('#scanSteps li').forEach(function (li, i) {
+    li.querySelector('button').addEventListener('click', function () {
+      if (scanning) return;
+      if (i > 0 && !stepDone(0)) { toast('Start with step 1, the front of your face.', 'error'); return; }
+      scanStep = i;
+      renderScanSteps();
+      $('scanStatus').textContent = stream ? 'Press the button when you\'re in position.' : 'Enable the camera to start the scan.';
+    });
+  });
+
+  // short beeps for the countdown, so the user can follow it while facing away
+  function beep(freq, ms) {
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext, ac = new AC(), o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.value = freq; g.gain.value = 0.08;
+      o.connect(g); g.connect(ac.destination); o.start();
+      g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + ms / 1000);
+      o.stop(ac.currentTime + ms / 1000 + 0.02);
+      o.onended = function () { ac.close(); };
+    } catch (e) { /* no audio */ }
+  }
+  function countdown(seconds) {
+    return new Promise(function (resolve) {
+      var left = seconds, el = $('scanCount');
+      el.classList.remove('hidden');
+      (function tick() {
+        el.textContent = left;
+        if (left === 0) { beep(1320, 220); el.classList.add('hidden'); return resolve(); }
+        beep(880, 120);
+        left--;
+        setTimeout(tick, 1000);
+      })();
+    });
   }
 
   $('downloadModel').addEventListener('click', function () {
@@ -286,10 +367,10 @@
       cam.srcObject = s;
       cam.play();
       $('camPlaceholder').classList.add('hidden');
-      ['scanFace', 'recordVoice', 'startAlphabet'].forEach(function (id) { $(id).disabled = false; });
+      ['scanFace', 'recordVoice'].forEach(function (id) { $(id).disabled = false; });
+      $('scanVoiceStatus').textContent = 'Ready. Press “Scan my voice” and read the passage.';
       setStartCamLabel(true);
-      $('scanStatus').textContent = 'Fit your face inside the oval, in good light, then scan.';
-      renderAlphabet(null);
+      $('scanStatus').textContent = 'Press the button when you\'re in position.';
     }).catch(function (err) {
       toast('Couldn\'t open the camera or mic: ' + err.message, 'error');
     });
@@ -297,69 +378,72 @@
 
   // Turns the camera and mic off (used when leaving the page).
   function stopCamera() {
-    if (alphaRun) alphaRun.stop = true;
     if (!stream) return;
     stream.getTracks().forEach(function (t) { t.stop(); });
     stream = null;
     cam.srcObject = null;
     $('camPlaceholder').classList.remove('hidden');
     setStartCamLabel(false);
-    ['scanFace', 'recordVoice', 'startAlphabet'].forEach(function (id) { $(id).disabled = true; });
-    renderAlphabet(null);
+    ['scanFace', 'recordVoice'].forEach(function (id) { $(id).disabled = true; });
   }
 
   $('scanFace').addEventListener('click', function () {
-    var line = $('scanLine');
-    line.classList.add('on');
+    if (!stream || scanning) return;
+    var step = scanStep, st = SCAN_STEPS[step], line = $('scanLine');
+    scanning = true;
     $('scanFace').disabled = true;
-    $('scanStatus').textContent = 'Loading the face model…';
-    ZoopeFaceMesh.load().then(function () {
-      $('scanStatus').textContent = 'Scanning. Hold still and look at the camera.';
-      return new Promise(function (res) { setTimeout(res, 400); });
+    $('scanStatus').textContent = 'Loading the scanning models…';
+    Promise.all([ZoopeFaceMesh.load(), ZoopeFaceMesh.loadSegmenter()]).then(function () {
+      $('scanStatus').textContent = 'Get into position. Capturing after the countdown.';
+      return countdown(st.countdown);
     }).then(function () {
-      // take a few scans and keep the one where the face fills the frame best
-      return Promise.all([0, 1, 2].map(function (i) {
-        return new Promise(function (res) { setTimeout(res, i * 300); }).then(function () { return ZoopeFaceMesh.scan(cam); });
-      }));
-    }).then(function (faces) {
-      var best = faces.filter(Boolean).sort(function (a, b) { return b.confidence - a.confidence; })[0];
-      if (!best) throw new Error('noface');
-      finishScan(best, '3D model generated from 478 depth points. Drag the preview to turn it.');
-      toast('Face scanned');
-    }).catch(function (err) {
-      if (err && err.message === 'noface') {
-        line.classList.remove('on');
-        $('scanFace').disabled = false;
-        $('scanStatus').textContent = 'No face found. Look straight at the camera, inside the oval, in good light.';
-        return;
+      line.classList.add('on');
+      $('scanStatus').textContent = 'Scanning…';
+      return step === 0 ? ZoopeHeadScan.captureFront(cam) : ZoopeHeadScan.captureView(cam, st.key);
+    }).then(function (res) {
+      if (!res.ok) { beep(220, 300); $('scanStatus').textContent = res.reason; return; }
+      if (step === 0) {
+        // a new front scan keeps the side and back captures already taken
+        res.face.views = (state.face && state.face.views) || {};
+        state.face = res.face;
+      } else {
+        state.face.views = state.face.views || {};
+        state.face.views[st.key] = res.view;
       }
-      // face model unavailable: fall back to the illustrated avatar
-      finishScan(ZoopeAvatar.scanFace(cam), 'The face model couldn\'t load, so zoope made an illustrated avatar instead.');
-    });
-
-    function finishScan(face, msg) {
-      line.classList.remove('on');
-      $('scanFace').disabled = false;
-      state.face = face;
+      save();
+      var next = firstMissing();
+      scanStep = next < 0 ? step : next;
+      refreshAvatarBox();
+      $('scanStatus').textContent = next < 0 ? 'All four views captured. Your 3D model is built from them. Drag the preview to turn it all the way around.'
+        : 'Captured. Next: ' + SCAN_STEPS[next].title.replace(/^Step \d · /, '').toLowerCase() + '.';
+      toast(st.title.replace(/^Step \d · /, '') + ' captured');
+    }).catch(function () {
+      // the scanning models couldn't load: fall back to an illustrated avatar, and say so
+      state.face = ZoopeAvatar.scanFace(cam);
       save();
       refreshAvatarBox();
-      $('scanStatus').textContent = msg;
-    }
+      $('scanStatus').textContent = 'The scanning models couldn\'t load, so zoope made an illustrated avatar instead. This is not a 3D scan.';
+    }).then(function () {
+      line.classList.remove('on');
+      scanning = false;
+      $('scanFace').disabled = !stream;
+    });
   });
 
-  /* ----------------------------- neural voice ----------------------------- */
+  /* ------------------------------ voice ------------------------------ */
   var SAMPLE_SECONDS = 15, SAMPLE_RATE = 24000;
   var voiceSample = loadSample(), neuralModule = null, neuralState = 'none'; // none | loading | ready | error
+  try { localStorage.removeItem('zoope-voiceclone'); } catch (e) { /* old alphabet recordings are no longer used */ }
 
   function loadSample() {
     try {
       var raw = JSON.parse(localStorage.getItem('zoope-voicesample') || 'null');
-      return raw ? { rate: raw.rate, data: ZoopeVoiceClone.decode(raw.pcm) } : null;
+      return raw ? { rate: raw.rate, data: ZoopeVoice.decodePCM(raw.pcm) } : null;
     } catch (e) { return null; }
   }
   function saveSample() {
     try {
-      localStorage.setItem('zoope-voicesample', JSON.stringify({ rate: voiceSample.rate, pcm: ZoopeVoiceClone.encode(voiceSample.data) }));
+      localStorage.setItem('zoope-voicesample', JSON.stringify({ rate: voiceSample.rate, pcm: ZoopeVoice.encodePCM(voiceSample.data) }));
       return true;
     } catch (e) { return false; }
   }
@@ -372,13 +456,40 @@
     return neuralModule;
   }
 
-  function renderNeural(msg) {
+  // the voice profile measured from the scan
+  function renderProfile() {
+    var v = state.voice;
+    var has = !!(v && v.ok && v.contour);
+    $('voiceProfile').classList.toggle('hidden', !has);
+    if (!has) return;
+    $('vpPitch').innerHTML = v.pitchHz + ' Hz<small>' + (v.pitchHz < 125 ? 'low' : v.pitchHz < 180 ? 'medium-low' : v.pitchHz < 230 ? 'medium-high' : 'high') + '</small>';
+    $('vpRange').innerHTML = v.rangeSemitones + ' st<small>' + v.lowHz + '–' + v.highHz + ' Hz</small>';
+    $('vpPace').innerHTML = v.pace + '<small>syllables/s</small>';
+    $('vpBright').innerHTML = v.brightnessHz + ' Hz<small>' + (v.brightnessHz < 900 ? 'warm' : v.brightnessHz < 1500 ? 'balanced' : 'bright') + '</small>';
+    var c = $('vpCanvas'), ctx = c.getContext('2d'), W = c.width, H = c.height;
+    ctx.clearRect(0, 0, W, H);
+    var pts = v.contour, lo = v.lowHz * 0.85, hi = v.highHz * 1.15;
+    ctx.strokeStyle = '#e4e4e7'; ctx.lineWidth = 1;
+    [0.25, 0.5, 0.75].forEach(function (f) { ctx.beginPath(); ctx.moveTo(0, H * f); ctx.lineTo(W, H * f); ctx.stroke(); });
+    ctx.fillStyle = '#0b5cff';
+    pts.forEach(function (hz, i) {
+      if (!hz) return;
+      var x = i / (pts.length - 1) * W, y = H - (Math.log(hz / lo) / Math.log(hi / lo)) * H;
+      ctx.fillRect(x - 1.5, Math.max(0, Math.min(H - 3, y - 1.5)), 3, 3);
+    });
+  }
+
+  function renderVoice(msg) {
     var badge = $('neuralBadge');
-    var labels = { none: voiceSample ? 'Sample recorded' : 'Not cloned', loading: 'Building…', ready: 'Neural clone ready', error: 'Not available' };
+    var labels = { none: voiceSample ? 'Scanned' : 'Not scanned', loading: 'Making your voice…', ready: 'Your voice is ready', error: 'Browser voice (fallback)' };
     badge.textContent = labels[neuralState];
-    badge.className = 'pill ' + (neuralState === 'ready' ? 'pill-green pill-dot' : neuralState === 'error' ? 'pill-amber' : '');
+    badge.className = 'pill ' + (neuralState === 'ready' ? 'pill-green pill-dot' : neuralState === 'error' ? 'pill-amber' : voiceSample ? 'pill-accent' : '');
     $('buildNeural').disabled = !voiceSample || neuralState === 'loading';
-    $('testNeural').disabled = neuralState !== 'ready';
+    $('testNeural').disabled = neuralState !== 'ready' && neuralState !== 'error';
+    $('testNeural').lastChild.textContent = neuralState === 'error' ? 'Hear fallback voice' : 'Hear my voice';
+    $('playSample').disabled = !voiceSample;
+    document.querySelectorAll('.vstep')[0].classList.toggle('done', !!voiceSample);
+    document.querySelectorAll('.vstep')[1].classList.toggle('done', neuralState === 'ready');
     if (msg) $('neuralStatus').textContent = msg;
     renderChecklist();
   }
@@ -421,185 +532,100 @@
     return out;
   }
 
+  // Step 1: record and measure the user's voice
   $('recordVoice').addEventListener('click', function () {
     if (!stream) return;
     var btn = $('recordVoice'), label = btn.querySelector('span');
     btn.disabled = true;
-    // the same take also tunes the browser voice (pitch and pace)
-    ZoopeVoice.scanVoice(stream, SAMPLE_SECONDS, null).then(function (v) { if (v.ok) { state.voice = v; save(); } }).catch(function () {});
+    $('scanVoiceStatus').textContent = 'Recording. Read the passage aloud.';
     recordRaw(stream, SAMPLE_SECONDS, function (frac, level) {
       label.textContent = 'Recording… ' + Math.max(0, Math.ceil(SAMPLE_SECONDS * (1 - frac))) + 's';
       $('sampleMeter').style.width = (level * 100) + '%';
     }).then(function (data) {
       $('sampleMeter').style.width = '0%';
-      var peak = 0; for (var i = 0; i < data.length; i += 8) peak = Math.max(peak, Math.abs(data[i]));
-      if (peak < 0.02) { toast('That sample was almost silent. Check your mic and try again.', 'error'); return; }
+      $('scanVoiceStatus').textContent = 'Analysing your voice…';
+      var profile = ZoopeVoice.analyzeSamples(data, SAMPLE_RATE);
+      if (!profile.ok) { $('scanVoiceStatus').textContent = profile.reason; toast('Voice scan failed. Try again.', 'error'); return; }
       voiceSample = { rate: SAMPLE_RATE, data: data };
-      if (!saveSample()) toast('Browser storage is full, so the sample lasts only until you close this tab.', 'error');
+      state.voice = profile;
+      state.neuralReady = false;
       neuralState = 'none';
-      state.neuralReady = false; save();
-      renderNeural('Sample saved. Create your neural voice next.');
-      toast('Voice sample recorded');
+      if (!saveSample()) toast('Browser storage is full, so the recording lasts only until you close this tab.', 'error');
+      save();
+      renderProfile();
+      $('scanVoiceStatus').textContent = 'Voice scanned: ' + profile.voicedSeconds + ' seconds of clear speech measured.';
+      renderVoice('Next, make your voice from this recording.');
+      toast('Voice scanned');
     }).catch(function (err) { toast(err.message, 'error'); })
-      .then(function () { btn.disabled = !stream; label.textContent = voiceSample ? 'Record again' : 'Record 15s sample'; });
+      .then(function () { btn.disabled = !stream; label.textContent = voiceSample ? 'Scan again (15s)' : 'Scan my voice (15s)'; });
   });
 
-  // Loads the model and encodes the user's voice. quiet: no toasts (used for warm-up on later visits).
+  $('playSample').addEventListener('click', function () {
+    if (!voiceSample) return;
+    var AC = window.AudioContext || window.webkitAudioContext, ac = new AC();
+    var buf = ac.createBuffer(1, voiceSample.data.length, voiceSample.rate);
+    buf.getChannelData(0).set(voiceSample.data);
+    var src = ac.createBufferSource(); src.buffer = buf; src.connect(ac.destination);
+    src.onended = function () { ac.close(); };
+    src.start();
+  });
+
+  // Step 2: make the voice from the recording. quiet: no toasts (used to restore it on later visits).
   function buildNeural(quiet) {
     if (!voiceSample || neuralState === 'loading') return Promise.resolve(false);
     neuralState = 'loading';
-    renderNeural(quiet ? null : 'Loading the voice model…');
+    renderVoice(quiet ? null : 'Loading the voice model…');
     return neural().then(function (m) {
-      return m.clone(voiceSample.data, voiceSample.rate, function (frac, label) { if (!quiet) showProgress(frac, label); }).then(function () { return m; });
+      return m.clone(voiceSample.data, voiceSample.rate, function (frac, label) { if (!quiet) showProgress(frac, label); });
     }).then(function () {
       neuralState = 'ready';
       state.neuralReady = true;
-      if (!state.voiceMode || state.voiceMode === 'clone') { state.voiceMode = 'neural'; $('voiceMode').value = 'neural'; }
+      state.voiceMode = 'neural'; $('voiceMode').value = 'neural';
       save();
       $('neuralProgress').classList.add('hidden');
-      renderNeural('Your neural voice is ready. zoope will speak in it during meetings.');
-      if (!quiet) toast('Neural voice cloned');
+      renderVoice('Your voice is ready. zoope will use it in meetings.');
+      if (!quiet) toast('Your voice is ready');
       return true;
     }).catch(function (err) {
       neuralState = 'error';
       $('neuralProgress').classList.add('hidden');
-      renderNeural('Couldn\'t load the voice model (' + (err && err.message ? err.message : 'network error') + '). zoope will use your alphabet clone or the browser voice instead.');
-      if (!quiet) toast('The neural voice model couldn\'t load', 'error');
+      renderVoice('The voice model couldn\'t load (' + (err && err.message ? err.message : 'network error') + '), so your voice could not be made. Until it can, zoope uses the browser\'s voice tuned to your pitch and pace. That is not your voice.');
+      if (!quiet) toast('Your voice couldn\'t be made', 'error');
       return false;
     });
   }
   $('buildNeural').addEventListener('click', function () { buildNeural(false); });
   $('testNeural').addEventListener('click', function () {
     var n = state.profile.preferred || 'your zoope';
-    neural().then(function (m) { return m.speak('Hi everyone, ' + n + ' here. Happy to share a quick update.', function (l) { previewLevel = l; }); })
-      .catch(function (err) { toast(err.message, 'error'); });
-  });
-
-  $('testVoice').addEventListener('click', function () {
-    var n = state.profile.preferred || 'your zoope';
     speakAs('Hi everyone, ' + n + ' here. Happy to share a quick update.', function (l) { previewLevel = l; });
   });
 
-  /* ------------------------- alphabet voice clone ------------------------- */
-  var LETTERS = ZoopeVoiceClone.LETTERS;
-  var clips = loadClips(), cloneVoice = null, alphaRun = null;
-
-  function loadClips() {
-    var out = {};
-    try {
-      var raw = JSON.parse(localStorage.getItem('zoope-voiceclone') || '{}');
-      for (var L in raw) out[L] = ZoopeVoiceClone.decode(raw[L]);
-    } catch (e) { /* storage unavailable or corrupt */ }
-    return out;
-  }
-  function saveClips() {
-    var raw = {};
-    for (var L in clips) raw[L] = ZoopeVoiceClone.encode(clips[L]);
-    try { localStorage.setItem('zoope-voiceclone', JSON.stringify(raw)); return true; } catch (e) { return false; }
-  }
-  function hasClone() { return Object.keys(clips).length >= 20; }
-  function rebuildClone() { cloneVoice = hasClone() ? new ZoopeVoiceClone.Voice(clips) : null; renderChecklist(); }
-
-  function renderAlphabet(current) {
-    $('alphaGrid').innerHTML = LETTERS.map(function (L) {
-      var cls = (clips[L] ? 'done' : '') + (L === current ? ' current' : '');
-      return '<button type="button" data-letter="' + L + '" class="' + cls + '" aria-label="Letter ' + L + (clips[L] ? ', recorded' : '') + '">' + L + '</button>';
-    }).join('');
-    var n = Object.keys(clips).length;
-    $('voiceBadge').textContent = n + ' / 26';
-    $('voiceBadge').className = 'pill ' + (n === 26 ? 'pill-green pill-dot' : hasClone() ? 'pill-accent' : '');
-    $('testClone').disabled = !hasClone();
-    if (!alphaRun) {
-      $('startAlphabet').lastChild.textContent = n && n < 26 ? 'Continue alphabet' : n === 26 ? 'Record again' : 'Record alphabet';
-      $('alphaStatus').textContent = n === 26 ? 'All 26 letters recorded. Your cloned voice is ready.'
-        : n ? n + ' of 26 letters recorded. ' + (hasClone() ? 'Enough to speak; more letters sound better.' : 'Record at least 20 to use your cloned voice.')
-        : (stream ? 'Ready when you are.' : 'Enable the camera & mic to start.');
-    }
-  }
-
-  function runAlphabet(list) {
-    if (!stream || alphaRun) return;
-    var run = alphaRun = { stop: false };
-    $('startAlphabet').disabled = true;
-    $('stopAlphabet').disabled = false;
-    var i = 0;
-    (function next() {
-      if (run.stop || i >= list.length) return end();
-      var L = list[i];
-      $('bigLetter').textContent = L;
-      $('bigLetter').classList.add('listening');
-      renderAlphabet(L);
-      $('alphaStatus').textContent = 'Say “' + L + '” now.';
-      ZoopeVoiceClone.recordLetter(stream, function (l) { $('meterFill').style.width = (l * 100) + '%'; }).then(function (clip) {
-        $('bigLetter').classList.remove('listening');
-        if (run.stop) return end();
-        if (!clip || clip.length < ZoopeVoiceClone.RATE * 0.15) {
-          $('alphaStatus').textContent = 'Didn\'t catch “' + L + '”. Trying again.';
-          return setTimeout(next, 900);
-        }
-        clips[L] = clip;
-        i++;
-        setTimeout(next, 250);
-      }).catch(function (err) { toast(err.message, 'error'); end(); });
-    })();
-
-    function end() {
-      $('bigLetter').classList.remove('listening');
-      alphaRun = null;
-      $('startAlphabet').disabled = !stream;
-      $('stopAlphabet').disabled = true;
-      var stored = saveClips();
-      rebuildClone();
-      renderAlphabet(null);
-      if (!stored) toast('Browser storage is full, so the recording lasts only until you close this tab.', 'error');
-      else if (hasClone()) toast('Voice clone updated');
-    }
-  }
-
-  $('startAlphabet').addEventListener('click', function () {
-    var todo = LETTERS.filter(function (L) { return !clips[L]; });
-    runAlphabet(todo.length ? todo : LETTERS.slice());
-  });
-  $('stopAlphabet').addEventListener('click', function () { if (alphaRun) alphaRun.stop = true; });
-  $('alphaGrid').addEventListener('click', function (e) {
-    var L = e.target.dataset.letter;
-    if (!L || alphaRun) return;
-    if (!stream) { if (clips[L]) ZoopeVoiceClone.playClip(clips[L]); return; }
-    runAlphabet([L]);
-  });
-  $('testClone').addEventListener('click', function () {
-    if (!cloneVoice) return;
-    var n = state.profile.preferred || 'your zoope';
-    cloneVoice.speak('Hi everyone, ' + n + ' here. Happy to share a quick update.', function (l) { previewLevel = l; });
-  });
-  $('voiceMode').value = state.voiceMode || (state.neuralReady ? 'neural' : 'clone');
+  $('voiceMode').value = state.voiceMode === 'tts' ? 'tts' : 'neural';
   $('voiceMode').addEventListener('change', function () { state.voiceMode = $('voiceMode').value; save(); });
 
-  // Speaks as the user: cloned voice when available and chosen, otherwise the tuned browser voice.
+  // Speaks in the user's generated voice; falls back to the tuned browser voice when it isn't available.
   function speakAs(text, onLevel) {
-    var mode = state.voiceMode || (state.neuralReady ? 'neural' : 'clone');
-    if (mode === 'neural' && neuralState === 'ready') {
+    if ((state.voiceMode || 'neural') === 'neural' && neuralState === 'ready') {
       return neural().then(function (m) { return m.speak(text, onLevel); }).catch(function () {
-        return cloneVoice ? cloneVoice.speak(text, onLevel) : ZoopeVoice.speak(text, state.voice, onLevel);
+        return ZoopeVoice.speak(text, state.voice, onLevel);
       });
     }
-    if (cloneVoice && mode !== 'tts') return cloneVoice.speak(text, onLevel);
     return ZoopeVoice.speak(text, state.voice, onLevel);
   }
 
   /* ------------------------------ checklist ------------------------------ */
   function checklistItems() {
     return [
-      { label: 'Connect a meeting app', done: Object.keys(state.platforms).length > 0, route: 'setup' },
+      { label: 'Link a meeting account', done: Object.keys(state.platforms).length > 0, route: 'setup' },
       { label: 'Add your names', done: state.profile.names.length > 0 && state.chatStep === 'done', route: 'setup' },
       { label: 'Write knowledge', done: !!state.profile.knowledge, route: 'setup' },
-      { label: 'Scan your face', done: !!state.face, route: 'clone' },
-      { label: 'Clone your voice', done: hasClone() || !!state.neuralReady, route: 'clone' },
+      { label: 'Scan your head (4 views)', done: typeof SCAN_STEPS !== 'undefined' && scanCount() === 4, route: 'clone' },
+      { label: 'Make your voice', done: !!state.neuralReady, route: 'clone' },
       { label: 'Confirm a meeting', done: state.meetings.some(function (m) { return m.confirmed; }), route: 'meetings' }
     ];
   }
   function renderChecklist() {
-    if (typeof clips === 'undefined') return; // called during start-up before the voice bank loads
+    if (typeof voiceSample === 'undefined') return; // called during start-up, before the voice loads
     var items = checklistItems(), done = items.filter(function (i) { return i.done; }).length;
     $('checklistCount').textContent = done + '/' + items.length;
     $('checklistBar').style.width = (done / items.length * 100) + '%';
@@ -627,7 +653,7 @@
     var list = $('meetingList');
     if (!state.meetings.length) {
       list.innerHTML = '<div class="empty"><div class="empty-icon">' + icon('calendar') + '</div>' +
-        '<h3>No meetings yet</h3><p>Add a meeting from a connected app. zoope joins only after you confirm it.</p>' +
+        '<h3>No meetings yet</h3><p>Add a meeting. zoope joins only after you confirm it.</p>' +
         '<button type="button" class="btn btn-secondary" data-act="new">' + icon('plus') + 'New meeting</button></div>';
       renderChecklist();
       return;
@@ -670,7 +696,7 @@
     e.preventDefault();
     var platform = $('mPlatform').value;
     if (!state.platforms[platform]) {
-      $('meetingError').innerHTML = 'Connect ' + PLATFORMS[platform].name + ' first in <a href="#/setup"><u>Setup</u></a>.';
+      $('meetingError').innerHTML = 'Link your ' + PLATFORMS[platform].name + ' account first in <a href="#/setup"><u>Setup</u></a>.';
       return;
     }
     var link = $('mLink').value.trim();
@@ -703,8 +729,8 @@
       var missing = readinessProblems();
       confirmDialog({
         title: 'Send zoope to “' + m.title + '”?',
-        body: 'zoope will join on ' + PLATFORMS[m.platform].name + ' at ' + esc(fmtDate(m.time).time || 'the start time') +
-          ' and speak as <b>' + esc(state.profile.preferred || 'you') + '</b> with your avatar and voice.' +
+        body: 'At ' + esc(fmtDate(m.time).time || 'the start time') + ', zoope opens the meeting room for this ' + PLATFORMS[m.platform].name +
+          ' meeting and speaks as <b>' + esc(state.profile.preferred || 'your') + '\'s AI assistant</b>, with your avatar and voice.' +
           (missing.length ? '<div class="dialog-note">Not ready yet: ' + esc(missing.join('; ')) + '.</div>' : ''),
         ok: 'Approve'
       }).then(function (ok) {
@@ -731,8 +757,9 @@
   function readinessProblems() {
     var out = [];
     if (!state.profile.names.length) out.push('add your names');
-    if (!state.face) out.push('scan your face');
-    if (!state.voice && !hasClone() && !state.neuralReady) out.push('record your voice');
+    if (!state.face) out.push('scan your head');
+    else if (scanCount() < 4) out.push('finish the head scan (' + scanCount() + ' of 4 views)');
+    if (!state.neuralReady) out.push(state.voice ? 'make your voice (it will use the browser voice)' : 'scan your voice');
     return out;
   }
 
@@ -1060,10 +1087,10 @@
   startChat();
   renderKnowledgeStatus(false);
   refreshAvatarBox();
-  rebuildClone();
-  renderAlphabet(null);
   renderMeetings();
-  renderNeural(voiceSample ? (state.neuralReady ? 'Loading your neural voice…' : 'Sample saved. Create your neural voice next.') : null);
+  renderProfile();
+  if (voiceSample) $('scanVoiceStatus').textContent = 'Voice scanned. You can scan again at any time.';
+  renderVoice(voiceSample ? (state.neuralReady ? 'Loading your voice…' : 'Next, make your voice from this recording.') : null);
   // the model was downloaded before: rebuild the voice in the background
   if (voiceSample && state.neuralReady) buildNeural(true);
   go(routeFromHash(), true);

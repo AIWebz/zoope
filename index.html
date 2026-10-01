@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>zoope</title>
-  <meta name="description" content="zoope is an AI stand-in that attends Zoom, Google Meet and Microsoft Teams meetings for you, with your face and your voice. Runs entirely on your device.">
+  <meta name="description" content="zoope is an AI assistant that stands in for you at meetings, with a 3D avatar of you and a voice made from yours. It always says it is an AI, and runs on your device.">
   <meta name="theme-color" content="#ffffff">
   <link rel="preload" href="vendor/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="css/style.css">
@@ -64,7 +64,7 @@
             <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg>
           </a>
           <h1 class="hero-wordmark enter" style="--d:1">zoope</h1>
-          <p class="hero-lede enter" style="--d:2">The AI stand-in that attends your Zoom, Google Meet and Teams calls, with your face, your voice, and the judgement to know when to speak.</p>
+          <p class="hero-lede enter" style="--d:2">An AI assistant that stands in for you at meetings, with a 3D avatar of you, a voice made from yours, and the judgement to know when to speak. It always says it's an AI.</p>
           <div class="hero-actions enter" style="--d:3">
             <a href="#/setup" class="btn btn-primary btn-lg">Get started <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a>
             <a href="#/demo" class="btn btn-secondary btn-lg"><svg class="icon icon-fill" aria-hidden="true"><use href="#i-play"/></svg> Watch the demo</a>
@@ -93,7 +93,7 @@
 
     <section class="band band-logos">
       <div class="wrap logos-row">
-        <span class="eyebrow">Works with</span>
+        <span class="eyebrow">Plan meetings from</span>
         <span class="logo-item"><img src="assets/zoom.jpg" alt=""> Zoom</span>
         <span class="logo-item"><img src="assets/meet.png" alt=""> Google Meet</span>
         <span class="logo-item"><img src="assets/teams.webp" alt=""> Microsoft Teams</span>
@@ -109,8 +109,8 @@
         <ol class="steps">
           <li><span class="step-num">01</span><h3>Connect</h3><p>Link Zoom, Google Meet or Microsoft Teams, and tell zoope every name people call you.</p></li>
           <li><span class="step-num">02</span><h3>Teach</h3><p>Write the updates and facts it may share. Anything else becomes a follow-up, never a guess.</p></li>
-          <li><span class="step-num">03</span><h3>Clone</h3><p>A 478-point face scan becomes a 3D avatar, and a 15-second recording becomes your voice.</p></li>
-          <li><span class="step-num">04</span><h3>Confirm</h3><p>Approve each meeting. zoope joins at the start time and hands you a summary afterwards.</p></li>
+          <li><span class="step-num">03</span><h3>Clone</h3><p>A four-angle head scan becomes a 3D avatar, and a 15-second recording becomes your voice.</p></li>
+          <li><span class="step-num">04</span><h3>Confirm</h3><p>Approve each meeting. At the start time zoope opens its meeting room, and afterwards hands you a summary.</p></li>
         </ol>
       </div>
     </section>
@@ -149,7 +149,7 @@
           <h2>Everything a stand-in needs. Nothing it doesn't.</h2>
         </header>
         <div class="feature-grid">
-          <article><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg><h3>3D avatar</h3><p>A real 3D head built from a 478-point face scan. It talks, blinks, and exports as .glb.</p></article>
+          <article><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg><h3>3D avatar</h3><p>A 3D head built from a scan of your face, both sides and the back of your head. It talks, blinks, and exports as .glb.</p></article>
           <article><svg class="icon" aria-hidden="true"><use href="#i-wave"/></svg><h3>Your voice</h3><p>A neural model clones your voice from a 15-second sample and speaks any sentence in it.</p></article>
           <article><svg class="icon" aria-hidden="true"><use href="#i-brain"/></svg><h3>Grounded answers</h3><p>Answers only from the notes you write. Unknowns become follow-ups.</p></article>
           <article><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg><h3>Action items</h3><p>“Could you draft the email by Thursday?” lands in your summary with its due date.</p></article>
@@ -167,7 +167,7 @@
           <p>The decision engine, face model, 3D renderer and voice model all run in your browser. There are no API calls and no uploads. The voice model downloads once and is cached on your device.</p>
         </div>
         <dl class="stat-grid">
-          <div><dt>AI network requests</dt><dd>0</dd></div>
+          <div><dt>Servers that see your data</dt><dd>0</dd></div>
           <div><dt>Face landmarks</dt><dd>478</dd></div>
           <div><dt>Voice sample</dt><dd>15 s</dd></div>
           <div><dt>Data uploaded</dt><dd>0 B</dd></div>
@@ -253,24 +253,24 @@
           <section class="setting">
             <div class="setting-meta">
               <h2>Connections</h2>
-              <p>The platforms zoope may join on your behalf. You still confirm each meeting.</p>
+              <p>The accounts you use for meetings. zoope saves them to organise your meetings; it doesn't sign in to these services.</p>
             </div>
             <div class="panel">
               <div class="platform" data-platform="zoom">
                 <img src="assets/zoom.jpg" alt="">
-                <div class="platform-info"><b>Zoom</b><span class="platform-sub">Not connected</span></div>
+                <div class="platform-info"><b>Zoom</b><span class="platform-sub">Not linked</span></div>
                 <input type="email" class="input acct" placeholder="you@company.com" aria-label="Zoom account email">
                 <button type="button" class="btn btn-secondary connect-btn">Connect</button>
               </div>
               <div class="platform" data-platform="meet">
                 <img src="assets/meet.png" alt="">
-                <div class="platform-info"><b>Google Meet</b><span class="platform-sub">Not connected</span></div>
+                <div class="platform-info"><b>Google Meet</b><span class="platform-sub">Not linked</span></div>
                 <input type="email" class="input acct" placeholder="you@gmail.com" aria-label="Google account email">
                 <button type="button" class="btn btn-secondary connect-btn">Connect</button>
               </div>
               <div class="platform" data-platform="teams">
                 <img src="assets/teams.webp" alt="">
-                <div class="platform-info"><b>Microsoft Teams</b><span class="platform-sub">Not connected</span></div>
+                <div class="platform-info"><b>Microsoft Teams</b><span class="platform-sub">Not linked</span></div>
                 <input type="email" class="input acct" placeholder="you@company.com" aria-label="Microsoft account email">
                 <button type="button" class="btn btn-secondary connect-btn">Connect</button>
               </div>
@@ -312,41 +312,54 @@
           <header class="page-header">
             <div>
               <h1>Face &amp; voice</h1>
-              <p>Generate a 3D avatar from a face scan and clone your voice from a short recording. Everything is processed on this device.</p>
+              <p>Scan your head in four steps to build a 3D avatar, then scan your voice and make a voice from it. Everything is processed on this device.</p>
             </div>
             <button type="button" class="btn btn-primary" id="startCam"><svg class="icon" aria-hidden="true"><use href="#i-video"/></svg><span>Enable camera &amp; mic</span></button>
           </header>
 
           <section class="panel">
             <div class="panel-head">
-              <span class="panel-title">Face</span>
-              <span class="pill" id="faceBadge">Not scanned</span>
+              <span class="panel-title">Head scan</span>
+              <span class="pill" id="faceBadge">0 / 4 captured</span>
             </div>
+            <ol class="scan-steps" id="scanSteps">
+              <li data-step="0"><button type="button"><span class="ss-thumb"></span><span class="ss-text"><b>1. Face &amp; hair</b><em>Front</em></span></button></li>
+              <li data-step="1"><button type="button"><span class="ss-thumb"></span><span class="ss-text"><b>2. Right side</b><em>Turn left</em></span></button></li>
+              <li data-step="2"><button type="button"><span class="ss-thumb"></span><span class="ss-text"><b>3. Left side</b><em>Turn right</em></span></button></li>
+              <li data-step="3"><button type="button"><span class="ss-thumb"></span><span class="ss-text"><b>4. Back of head</b><em>Turn around</em></span></button></li>
+            </ol>
             <div class="face-grid">
               <div class="viewport">
                 <video id="cam" playsinline muted></video>
-                <div class="oval-guide"></div>
+                <div class="scan-guide" id="scanGuide" data-step="0"><div class="guide-shape"></div><div class="guide-arrow"></div></div>
                 <div class="scan-line" id="scanLine"></div>
+                <div class="scan-count hidden" id="scanCount">3</div>
                 <div class="viewport-empty" id="camPlaceholder">
                   <svg class="icon" aria-hidden="true"><use href="#i-video"/></svg>
                   <span>Camera is off</span>
                 </div>
               </div>
               <div class="face-side">
+                <div class="scan-instruction">
+                  <b id="scanTitle">Step 1 · Face &amp; hair</b>
+                  <p id="scanInstruction">Face the camera with your whole head and hair in view, in good light. Keep a neutral expression.</p>
+                </div>
+                <div class="btn-row">
+                  <button type="button" class="btn btn-primary" id="scanFace" disabled><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg><span>Capture front</span></button>
+                </div>
+                <p class="hint" id="scanStatus">Enable the camera to start the scan.</p>
                 <div class="avatar-stage">
                   <canvas id="avatarCanvas" width="400" height="400"></canvas>
                   <span class="drag-hint hidden" id="dragHint">Drag to rotate</span>
                 </div>
                 <dl class="kv">
-                  <div><dt>Scan</dt><dd>MediaPipe Face Landmarker</dd></div>
-                  <div><dt>Avatar</dt><dd id="avatarInfo">None yet</dd></div>
+                  <div><dt>Model</dt><dd id="avatarInfo">None yet</dd></div>
+                  <div><dt>Measured</dt><dd id="avatarMeasured">–</dd></div>
                 </dl>
                 <div class="btn-row">
-                  <button type="button" class="btn btn-primary" id="scanFace" disabled><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg>Scan face</button>
                   <button type="button" class="btn btn-secondary" id="testVoice" disabled><svg class="icon" aria-hidden="true"><use href="#i-volume"/></svg>Preview</button>
                   <button type="button" class="btn btn-secondary" id="downloadModel" disabled title="Download the 3D model as a .glb file"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>.glb</button>
                 </div>
-                <p class="hint" id="scanStatus">Enable the camera, then fit your face inside the oval in good light.</p>
               </div>
             </div>
           </section>
@@ -354,60 +367,65 @@
           <section class="panel">
             <div class="panel-head">
               <span class="panel-title">Voice</span>
-              <span class="pill" id="neuralBadge">Not cloned</span>
+              <span class="pill" id="neuralBadge">Not scanned</span>
               <label class="select-inline push">Meeting voice
                 <select id="voiceMode" class="select">
-                  <option value="neural">Neural clone</option>
-                  <option value="clone">Alphabet clone</option>
-                  <option value="tts">Browser voice</option>
+                  <option value="neural">Your voice (neural)</option>
+                  <option value="tts">Browser voice, tuned to you</option>
                 </select>
               </label>
             </div>
 
-            <div class="neural">
-              <div class="neural-copy">
-                <h3>Neural clone <span class="pill pill-accent">Recommended</span></h3>
-                <p class="hint-strong">Read the passage aloud. Pocket TTS, a neural voice model running on this device, learns your voice from the recording and then speaks any sentence as you.</p>
+            <div class="vstep">
+              <div class="vstep-num">1</div>
+              <div class="vstep-body">
+                <h3>Scan your voice</h3>
+                <p class="hint-strong">Read this aloud at your normal pace. zoope records 15 seconds and measures your voice.</p>
                 <blockquote class="passage">“Hi everyone, thanks for having me. Quick update on the redesign: we're on track, the checkout page is nearly finished, and I'll send notes after the call. Let me know if you have any questions.”</blockquote>
                 <div class="btn-row">
-                  <button type="button" class="btn btn-primary" id="recordVoice" disabled><svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg><span>Record 15s sample</span></button>
-                  <button type="button" class="btn btn-secondary" id="buildNeural" disabled><svg class="icon" aria-hidden="true"><use href="#i-wave"/></svg>Create neural voice</button>
-                  <button type="button" class="btn btn-secondary" id="testNeural" disabled><svg class="icon" aria-hidden="true"><use href="#i-volume"/></svg>Hear it</button>
+                  <button type="button" class="btn btn-primary" id="recordVoice" disabled><svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg><span>Scan my voice (15s)</span></button>
+                  <button type="button" class="btn btn-secondary" id="playSample" disabled><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg>Play recording</button>
                 </div>
                 <div class="meter sample-meter"><span id="sampleMeter"></span></div>
-                <div class="progress-row hidden" id="neuralProgress">
-                  <div class="progress"><span id="neuralBar"></span></div>
-                  <span class="mono muted-2" id="neuralPct">0%</span>
+                <p class="hint" id="scanVoiceStatus">Enable the camera &amp; mic first.</p>
+
+                <div class="voice-profile hidden" id="voiceProfile">
+                  <dl class="vp-stats">
+                    <div><dt>Typical pitch</dt><dd id="vpPitch">–</dd></div>
+                    <div><dt>Pitch range</dt><dd id="vpRange">–</dd></div>
+                    <div><dt>Pace</dt><dd id="vpPace">–</dd></div>
+                    <div><dt>Brightness</dt><dd id="vpBright">–</dd></div>
+                  </dl>
+                  <div class="vp-contour">
+                    <span>Pitch over your recording</span>
+                    <canvas id="vpCanvas" width="640" height="96"></canvas>
+                  </div>
                 </div>
-                <p class="hint" id="neuralStatus">Enable the camera &amp; mic, then record a sample.</p>
               </div>
-              <ul class="neural-facts">
-                <li><b>Model</b><span>Kyutai Pocket TTS, 100M parameters (CC BY 4.0)</span></li>
-                <li><b>Runs</b><span>In your browser (onnxruntime-web)</span></li>
-                <li><b>First use</b><span>Downloads ~216 MB once, then cached</span></li>
-                <li><b>Privacy</b><span>Your voice and text never leave this device</span></li>
-              </ul>
             </div>
 
-            <div class="subhead">
-              <span>Alphabet clone</span>
-              <span class="pill" id="voiceBadge">0 / 26</span>
-              <span class="muted-2">Offline alternative, built from your recordings of each letter</span>
-            </div>
-            <div class="voice-grid">
-              <div class="letter-stage">
-                <div class="big-letter" id="bigLetter">A</div>
-                <div class="meter"><span id="meterFill"></span></div>
-              </div>
-              <div class="voice-side">
-                <p class="hint-strong">Say each letter's name clearly (“ay”, “bee”, “see”), then pause. zoope moves on by itself. Select a letter to redo it.</p>
-                <div class="keys" id="alphaGrid"></div>
-                <div class="btn-row">
-                  <button type="button" class="btn btn-secondary" id="startAlphabet" disabled><svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg>Record alphabet</button>
-                  <button type="button" class="btn btn-secondary" id="stopAlphabet" disabled><svg class="icon" aria-hidden="true"><use href="#i-stop"/></svg>Stop</button>
-                  <button type="button" class="btn btn-secondary" id="testClone" disabled><svg class="icon" aria-hidden="true"><use href="#i-volume"/></svg>Hear alphabet voice</button>
+            <div class="vstep">
+              <div class="vstep-num">2</div>
+              <div class="vstep-body neural">
+                <div class="neural-copy">
+                  <h3>Make your voice</h3>
+                  <p class="hint-strong">zoope builds your voice from the recording with Pocket TTS, a neural voice model running on this device: it encodes how you sound, then says any sentence that way.</p>
+                  <div class="btn-row">
+                    <button type="button" class="btn btn-primary" id="buildNeural" disabled><svg class="icon" aria-hidden="true"><use href="#i-wave"/></svg>Make my voice</button>
+                    <button type="button" class="btn btn-secondary" id="testNeural" disabled><svg class="icon" aria-hidden="true"><use href="#i-volume"/></svg>Hear my voice</button>
+                  </div>
+                  <div class="progress-row hidden" id="neuralProgress">
+                    <div class="progress"><span id="neuralBar"></span></div>
+                    <span class="mono muted-2" id="neuralPct">0%</span>
+                  </div>
+                  <p class="hint" id="neuralStatus">Scan your voice first.</p>
                 </div>
-                <p class="hint" id="alphaStatus">Enable the camera &amp; mic to start.</p>
+                <ul class="neural-facts">
+                  <li><b>Model</b><span>Kyutai Pocket TTS, 100M parameters (CC BY 4.0)</span></li>
+                  <li><b>Runs</b><span>In your browser (onnxruntime-web)</span></li>
+                  <li><b>First use</b><span>Downloads ~216 MB once, then cached</span></li>
+                  <li><b>Privacy</b><span>Your voice and text never leave this device</span></li>
+                </ul>
               </div>
             </div>
           </section>
@@ -530,9 +548,9 @@
 
   <script src="js/engine.js"></script>
   <script src="js/facemesh.js"></script>
+  <script src="js/headscan.js"></script>
   <script src="js/avatar.js"></script>
   <script src="js/voice.js"></script>
-  <script src="js/voiceclone.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
