@@ -1062,3 +1062,16 @@ body.leaving .site, body.leaving .app { opacity: 0; transition: opacity .16s eas
 .ext-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .ext-steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; color: var(--gray-700); }
 .ext-steps code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12.5px; padding: 1px 5px; border-radius: 4px; background: var(--gray-100); }
+
+/* phones: 16px fields stop iOS zooming in on focus; bigger tap targets; respect the notch */
+@media (max-width: 640px), (pointer: coarse) {
+  input, select, textarea, .input, .select, .textarea { font-size: 16px; }
+  .btn-sm { height: 36px; padding: 0 12px; }
+}
+@media (max-width: 640px) {
+  body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+  .btn { min-height: 40px; }
+  .avatar-stage { max-width: 100%; }
+  .room-actions { flex-wrap: wrap; }
+  .transcript { max-height: 50vh; }
+}

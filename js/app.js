@@ -374,7 +374,7 @@
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       toast('This browser can\'t access a camera.', 'error'); return;
     }
-    navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: true }).then(function (s) {
+    navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }, audio: true }).then(function (s) {
       stream = s;
       cam.srcObject = s;
       cam.play();
@@ -881,6 +881,7 @@
       if (!m.demo) {
         sys(!m.link ? 'This meeting has no link, so zoope can\'t join it for real. Add the link to join the actual call.'
           : !ZoopeBridge.platformOf(m.link) ? 'This link isn\'t a Zoom, Google Meet or Teams meeting link, so this is a practice room.'
+          : IS_PHONE ? 'Real calls are joined from a computer with the zoope extension. On a phone, this is a practice room.'
           : 'To join the real call, install the zoope extension (see Setup). Until then, this is a practice room.');
       }
       if (problems.length) sys('Not ready yet: ' + problems.join('; ') + '.');
@@ -950,6 +951,12 @@
         setRoomState('left');
         sys('Couldn\'t open the meeting: ' + err.message);
       });
+  }
+  // browser extensions don't run on phones, so real calls are joined from a computer
+  if (IS_PHONE) {
+    $('extStatus').textContent = 'Needs a computer';
+    $('extHint').textContent = 'Phone browsers can\'t run extensions. Install it in Chrome or Edge on a computer; zoope joins calls from there. On this phone you can set up, take notes, run the demo and read summaries.';
+    document.querySelector('.ext-steps').classList.add('hidden');
   }
   ZoopeBridge.onAvailable(function (v) {
     $('extStatus').textContent = 'Installed · v' + v;
