@@ -47,7 +47,12 @@ export async function synth(text, v) {
   while (off + 8 <= wav.length && String.fromCharCode(wav[off], wav[off + 1], wav[off + 2], wav[off + 3]) !== 'data') off += 8 + dv.getUint32(off + 4, true);
   const n = Math.max(0, Math.min(dv.getUint32(off + 4, true), wav.length - off - 8) >> 1), out = new Float32Array(n);
   for (let i = 0; i < n; i++) out[i] = dv.getInt16(off + 8 + i * 2, true) / 32768;
-  return { samples: out, rate };
+  // trim the synthesizer's silence at both ends, so replies start right away
+  let a = 0, b = out.length;
+  while (a < b && Math.abs(out[a]) < 0.004) a++;
+  while (b > a && Math.abs(out[b - 1]) < 0.004) b--;
+  const pad = Math.round(rate * 0.03);
+  return { samples: out.subarray(Math.max(0, a - pad), Math.min(out.length, b + pad)), rate };
 }
 
 // ---------- tone matching: long-term average spectrum in log bands ----------
@@ -179,24 +184,17 @@ export async function speak(text, v, onLevel, out) {
     if (onLevel) onLevel(window.ZoopeVoice.shapeOf(td, ac.sampleRate));
     requestAnimationFrame(meter);
   })();
-  // sentence by sentence: the first one plays while the next is being made
-  const parts = String(text).match(/[^.!?]+[.!?]*\s*/g) || [text];
-  let cursor = ac.currentTime + 0.03, last = null, next = render(parts[0], v);
-  for (let i = 0; i < parts.length; i++) {
-    const { samples, rate } = await next;
-    if (i + 1 < parts.length) next = render(parts[i + 1], v);
-    const buf = ac.createBuffer(1, samples.length, rate);
-    buf.getChannelData(0).set(samples);
-    const src = ac.createBufferSource();
-    src.buffer = buf;
-    src.connect(analyser);
-    if (cursor < ac.currentTime) cursor = ac.currentTime + 0.01;
-    if (out && out.onEnvelope) out.onEnvelope({ at: Date.now() + (cursor - ac.currentTime) * 1000, step: 20, shapes: window.ZoopeVoice.shapeTrack(samples, rate, 20) });
-    src.start(cursor);
-    cursor += buf.duration;
-    last = src;
-  }
-  await new Promise((resolve) => { if (!last) return resolve(); last.onended = resolve; });
+  // the whole reply in one pass, so it flows without gaps between sentences
+  const { samples, rate } = await render(text, v);
+  const buf = ac.createBuffer(1, samples.length, rate);
+  buf.getChannelData(0).set(samples);
+  const last = ac.createBufferSource();
+  last.buffer = buf;
+  last.connect(analyser);
+  const startAt = ac.currentTime + 0.03;
+  if (out && out.onEnvelope) out.onEnvelope({ at: Date.now() + 30, step: 20, shapes: window.ZoopeVoice.shapeTrack(samples, rate, 20) });
+  last.start(startAt);
+  await new Promise((resolve) => { last.onended = resolve; });
   playing = false;
   analyser.disconnect();
   if (onLevel) onLevel({ open: 0, wide: 0, round: 0, teeth: 0 });

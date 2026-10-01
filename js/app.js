@@ -636,7 +636,7 @@
   function buildNeural(quiet) {
     if (!voiceSample || neuralState === 'loading') return Promise.resolve(false);
     // phones: the light voice, which always fits (the neural model needs ~1 GB of memory)
-    if (IS_PHONE || state.preferLite) {
+    if (IS_PHONE) {
       if (quiet) return Promise.resolve(liteReady());
       return makeLite('');
     }
@@ -669,8 +669,9 @@
       markBuilding(false);
       neuralState = 'error';
       $('neuralProgress').classList.add('hidden');
-      var why = 'The HD voice model couldn\'t load (' + (err && err.message ? err.message : 'network error') + '), so zoope made your light voice instead.';
-      if (quiet) { renderVoice(liteReady() ? 'Using your light voice.' : why); return false; }
+      var why = 'Your voice clone couldn\'t be made: ' + (err && err.message ? err.message : 'network error') + '. Press Make my voice to try again. Until then zoope uses a light voice tuned to your pitch and pace, which does not sound like you.';
+      if (quiet) { renderVoice(why); return false; }
+      if (liteReady()) { renderVoice(why); toast('Your voice clone couldn\'t be made', 'error'); return false; }
       return makeLite(why);
     });
   }
@@ -1378,8 +1379,7 @@
   if (neuralCrashed()) {
     markBuilding(false);
     neuralState = 'error';
-    state.preferLite = true; save();
-    renderVoice('The HD voice closed this tab last time (the device ran out of memory). Press Make my voice to make your light voice, which fits on any device.');
+    renderVoice('Making your voice closed this tab last time (the computer ran out of memory). Close other tabs and press Make my voice to try again.');
   } else if (voiceSample && state.neuralReady && !IS_PHONE) buildNeural(true);
   go(routeFromHash(), true);
 })();

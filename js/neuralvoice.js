@@ -21,15 +21,25 @@ let enginePromise = null;
 let engine = null;
 let clonedSeconds = 0;
 
-async function modelsUrl() {
+// Where the model can come from, in order: self-hosted next to zoope, Hugging Face, and a
+// public mirror of Hugging Face (for networks that block huggingface.co).
+const SOURCES = [
+  { url: LOCAL_MODELS, source: 'local' },
+  { url: REMOTE_MODELS, source: 'remote' },
+  { url: 'https://hf-mirror.com/thewh1teagle/pocket-tts-onnx/resolve/main/en/', source: 'mirror' }
+];
+async function reachable(base) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 10000);
   try {
-    const res = await fetch(LOCAL_MODELS + 'manifest.json', { method: 'HEAD', cache: 'no-store' });
-    if (res.ok) return { url: LOCAL_MODELS, source: 'local' };
-  } catch (e) { /* not self-hosted */ }
-  return { url: REMOTE_MODELS, source: 'remote' };
+    const res = await fetch(base + 'manifest.json', { cache: 'no-store', signal: ctl.signal });
+    return res.ok;
+  } catch (e) { return false; } finally { clearTimeout(t); }
+}
+async function modelsUrl() {
+  for (const s of SOURCES) if (await reachable(s.url)) return s;
+  throw new Error('the voice model could not be downloaded: huggingface.co and its mirror are blocked or offline on this network');
 }
 
-/* Loads the model (downloading it the first time). onProgress(fraction, label). */
 // Phones get far less memory per tab; the runtime then skips its memory arena
 // and frees the voice encoder as soon as the voice is made.
 const LOW_MEMORY = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
@@ -157,21 +167,37 @@ export async function speak(text, onLevel, out) {
     requestAnimationFrame(meter);
   })();
 
-  // a small lead so the first frames never underrun
-  let cursor = ac.currentTime + 0.12;
+  // Smooth playback: hold back the first half second of audio before starting, and if the
+  // model ever falls behind, wait for another half second instead of playing in fragments.
+  const LEAD = 0.5;
+  let cursor = 0, pending = [], pendingDur = 0, started = false;
+  const flush = () => {
+    if (!pending.length) return;
+    if (!started || cursor < ac.currentTime + 0.02) cursor = ac.currentTime + 0.05;
+    started = true;
+    for (const frame of pending) {
+      const buf = ac.createBuffer(1, frame.length, engine.sampleRate);
+      buf.getChannelData(0).set(frame);
+      const src = ac.createBufferSource();
+      src.buffer = buf;
+      src.connect(analyser);
+      src.start(cursor);
+      if (out && out.onEnvelope) out.onEnvelope(envelope(frame, engine.sampleRate, Date.now() + (cursor - ac.currentTime) * 1000));
+      cursor += buf.duration;
+    }
+    lastEnd = cursor;
+    pending = []; pendingDur = 0;
+  };
   // the worker resolves a Float32Array voice to the most recent clone
   for await (const frame of engine.speak(text, new Float32Array(1), { temperature: 0.2 })) {
-    const buf = ac.createBuffer(1, frame.length, engine.sampleRate);
-    buf.getChannelData(0).set(frame);
-    const src = ac.createBufferSource();
-    src.buffer = buf;
-    src.connect(analyser);
-    if (cursor < ac.currentTime) cursor = ac.currentTime + 0.02;
-    src.start(cursor);
-    if (out && out.onEnvelope) out.onEnvelope(envelope(frame, engine.sampleRate, Date.now() + (cursor - ac.currentTime) * 1000));
-    cursor += buf.duration;
-    lastEnd = cursor;
+    pending.push(frame);
+    pendingDur += frame.length / engine.sampleRate;
+    const ahead = started ? cursor - ac.currentTime : 0;
+    // keep playing seamlessly while we're ahead; re-buffer only after an underrun
+    if (started && ahead > 0.08) flush();
+    else if (pendingDur >= LEAD) flush();
   }
+  flush();
   await new Promise((resolve) => setTimeout(resolve, Math.max(0, (lastEnd - ac.currentTime) * 1000) + 60));
   playing = false;
   analyser.disconnect();

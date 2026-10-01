@@ -30,6 +30,19 @@ export async function isCached(url, version) {
  * digest per file, so that goes in the key and a changed model simply misses.
  */
 export async function fetchAsset(url, onProgress, version) {
+    // zoope: a 200 MB download can drop on a flaky connection; try up to three times
+    for (let attempt = 1;; attempt++) {
+        try {
+            return await fetchAssetOnce(url, onProgress, version);
+        }
+        catch (err) {
+            if (attempt >= 3 || /^4\d\d /.test(String(err && err.message)))
+                throw err;
+            await new Promise((r) => setTimeout(r, 1500 * attempt));
+        }
+    }
+}
+async function fetchAssetOnce(url, onProgress, version) {
     // A local path is already on the disk it would be cached to.
     const local = await readLocal(url);
     if (local) {
