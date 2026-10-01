@@ -313,5 +313,5 @@
 
   if (global.speechSynthesis) speechSynthesis.getVoices(); // warm up voice list
 
-  global.ZoopeVoice = { shapeOf: shapeOf, shapeTrack: shapeTrack, wordVisemes: wordVisemes, analyzeSamples: analyzeSamples, encodePCM: encodePCM, decodePCM: decodePCM, speak: speak, listen: listen, synthParams: synthParams };
+  global.ZoopeVoice = { spectrum: spectrum, shapeOf: shapeOf, shapeTrack: shapeTrack, wordVisemes: wordVisemes, analyzeSamples: analyzeSamples, encodePCM: encodePCM, decodePCM: decodePCM, speak: speak, listen: listen, synthParams: synthParams };
 })(window);

@@ -484,20 +484,21 @@
   // Phones give a browser tab far less memory than the voice model needs (~1 GB while it
   // loads), and reset the tab instead of reporting an error, so the model never runs there.
   var IS_PHONE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
-  var PHONE_VOICE_MSG = 'On a phone, zoope makes your voice in low-memory mode: it turns off the camera first and frees the voice encoder as soon as your voice is made. Use Wi-Fi (216 MB download) and close other tabs.';
+  var PHONE_VOICE_MSG = 'On a phone, zoope makes your light voice: a small speech synthesizer (18 MB) tuned to your pitch, pace and tone from this scan. It works on every phone. The HD neural clone needs a computer.';
   function renderVoice(msg) {
     var badge = $('neuralBadge');
     var labels = { none: voiceSample ? 'Scanned' : 'Not scanned', loading: 'Making your voice…', ready: 'Your voice is ready', error: 'Browser voice (fallback)' };
-    badge.textContent = labels[neuralState];
-    badge.className = 'pill ' + (neuralState === 'ready' ? 'pill-green pill-dot' : neuralState === 'error' ? 'pill-amber' : voiceSample ? 'pill-accent' : '');
+    var liteOn = neuralState !== 'ready' && neuralState !== 'loading' && liteReady();
+    badge.textContent = liteOn ? 'Light voice ready' : labels[neuralState];
+    badge.className = 'pill ' + (neuralState === 'ready' || liteOn ? 'pill-green pill-dot' : neuralState === 'error' ? 'pill-amber' : voiceSample ? 'pill-accent' : '');
     $('buildNeural').disabled = !voiceSample || neuralState === 'loading';
     $('testNeural').classList.toggle('hidden', false);
-    if (IS_PHONE && voiceSample && neuralState === 'none' && !msg) msg = PHONE_VOICE_MSG;
-    $('testNeural').disabled = neuralState !== 'ready' && neuralState !== 'error';
+    if (IS_PHONE && voiceSample && !liteOn && neuralState === 'none' && !msg) msg = PHONE_VOICE_MSG;
+    $('testNeural').disabled = neuralState !== 'ready' && neuralState !== 'error' && !liteOn;
     $('testNeural').lastChild.textContent = neuralState === 'error' ? 'Hear fallback voice' : 'Hear my voice';
     $('playSample').disabled = !voiceSample;
     document.querySelectorAll('.vstep')[0].classList.toggle('done', !!voiceSample);
-    document.querySelectorAll('.vstep')[1].classList.toggle('done', neuralState === 'ready');
+    document.querySelectorAll('.vstep')[1].classList.toggle('done', neuralState === 'ready' || liteOn);
     if (msg) $('neuralStatus').textContent = msg;
     renderChecklist();
   }
@@ -568,6 +569,7 @@
       voiceSample = { rate: SAMPLE_RATE, data: data };
       state.voice = profile;
       state.neuralReady = false;
+      state.liteVoice = null;
       neuralState = 'none';
       if (!saveSample()) toast('Browser storage is full, so the recording lasts only until you close this tab.', 'error');
       save();
@@ -597,10 +599,46 @@
   function neuralCrashed() { try { return localStorage.getItem('zoope-neural-building') === '1'; } catch (e) { return false; } }
   function markBuilding(on) { try { if (on) localStorage.setItem('zoope-neural-building', '1'); else localStorage.removeItem('zoope-neural-building'); } catch (e) { /* ignore */ } }
 
+  // The light voice: a small synthesizer tuned to the voice scan. Works on every device.
+  var liteModule = null;
+  function lite() {
+    if (!liteModule) {
+      liteModule = import(new URL('js/litevoice.js', document.baseURI).href);
+      liteModule.catch(function () { liteModule = null; });
+    }
+    return liteModule;
+  }
+  function liteReady() { return !!(state.liteVoice && state.liteVoice.gains); }
+  function makeLite(reason) {
+    if (!voiceSample || !state.voice) return Promise.resolve(false);
+    neuralState = 'loading';
+    renderVoice('Making your light voice…');
+    return lite().then(function (m) {
+      return m.make(voiceSample.data, voiceSample.rate, state.voice, showProgress);
+    }).then(function (v) {
+      state.liteVoice = v;
+      neuralState = 'none';
+      state.voiceMode = 'neural'; $('voiceMode').value = 'neural';
+      save();
+      $('neuralProgress').classList.add('hidden');
+      renderVoice((reason ? reason + ' ' : '') + 'Your light voice is ready: tuned to your pitch (' + state.voice.pitchHz + ' Hz), pace and tone. It sounds synthetic, not like a recording of you.');
+      toast('Your voice is ready');
+      return true;
+    }).catch(function (err) {
+      neuralState = 'error';
+      $('neuralProgress').classList.add('hidden');
+      renderVoice('Your voice couldn\'t be made (' + (err && err.message ? err.message : 'unknown error') + '). zoope uses the browser voice tuned to your pitch and pace until then.');
+      toast('Your voice couldn\'t be made', 'error');
+      return false;
+    });
+  }
+
   function buildNeural(quiet) {
     if (!voiceSample || neuralState === 'loading') return Promise.resolve(false);
-    if (!quiet && LOW_MEMORY && !window.confirm('Making your voice downloads a 216 MB model (use Wi-Fi). zoope turns off the camera and frees memory first. Close other tabs for the best chance. Continue?')) {
-      return Promise.resolve(false);
+    // phones: the light voice, which always fits (the neural model needs ~1 GB of memory)
+    if (IS_PHONE || state.preferLite) {
+      if (quiet) return Promise.resolve(liteReady());
+      return makeLite('');
     }
     // phones: free the camera, face models and preview before the voice model loads
     if (IS_PHONE) {
@@ -631,9 +669,9 @@
       markBuilding(false);
       neuralState = 'error';
       $('neuralProgress').classList.add('hidden');
-      renderVoice('The voice model couldn\'t load (' + (err && err.message ? err.message : 'network error') + '), so your voice could not be made. Until it can, zoope uses the browser\'s voice tuned to your pitch and pace. That is not your voice.');
-      if (!quiet) toast('Your voice couldn\'t be made', 'error');
-      return false;
+      var why = 'The HD voice model couldn\'t load (' + (err && err.message ? err.message : 'network error') + '), so zoope made your light voice instead.';
+      if (quiet) { renderVoice(liteReady() ? 'Using your light voice.' : why); return false; }
+      return makeLite(why);
     });
   }
   $('buildNeural').addEventListener('click', function () { buildNeural(false); });
@@ -648,11 +686,16 @@
   // Speaks in the user's generated voice; falls back to the tuned browser voice when it isn't available.
   function speakAs(text, onLevel) {
     // phones load the voice model only when it is first needed
-    if (IS_PHONE && state.neuralReady && neuralState === 'none' && (state.voiceMode || 'neural') === 'neural') {
+    if (!IS_PHONE && state.neuralReady && neuralState === 'none' && (state.voiceMode || 'neural') === 'neural') {
       return buildNeural(true).then(function () { return speakAs(text, onLevel); });
     }
     if ((state.voiceMode || 'neural') === 'neural' && neuralState === 'ready') {
       return neural().then(function (m) { return m.speak(text, onLevel); }).catch(function () {
+        return ZoopeVoice.speak(text, state.voice, onLevel);
+      });
+    }
+    if ((state.voiceMode || 'neural') === 'neural' && liteReady()) {
+      return lite().then(function (m) { return m.speak(text, state.liteVoice, onLevel); }).catch(function () {
         return ZoopeVoice.speak(text, state.voice, onLevel);
       });
     }
@@ -666,7 +709,7 @@
       { label: 'Add your names', done: state.profile.names.length > 0 && state.chatStep === 'done', route: 'setup' },
       { label: 'Send zoope a note', done: (state.profile.notes || []).length > 0, route: 'notes' },
       { label: 'Scan your face', done: typeof SCAN_STEPS !== 'undefined' && scanCount() === SCAN_STEPS.length, route: 'clone' },
-      { label: 'Make your voice', done: !!state.neuralReady, route: 'clone' },
+      { label: 'Make your voice', done: !!state.neuralReady || !!(state.liteVoice && state.liteVoice.gains), route: 'clone' },
       { label: 'Confirm a meeting', done: state.meetings.some(function (m) { return m.confirmed; }), route: 'meetings' }
     ];
   }
@@ -805,7 +848,7 @@
     if (!state.profile.names.length) out.push('add your names');
     if (!state.face) out.push('scan your head');
     else if (!state.face.portrait) out.push('rescan your face for the live avatar');
-    if (!state.neuralReady) out.push(state.voice ? 'make your voice (it will use the browser voice)' : 'scan your voice');
+    if (!state.neuralReady && !(state.liteVoice && state.liteVoice.gains)) out.push(state.voice ? 'make your voice (it will use the browser voice)' : 'scan your voice');
     return out;
   }
 
@@ -923,8 +966,8 @@
     var name = profile.fullName || profile.preferred || profile.names[0];
     setRoomState('opening');
     sys('Opening the ' + PLATFORMS[r.meeting.platform].name + ' meeting in a new tab. zoope joins as ' + name + '.');
-    if (!(state.neuralReady && (state.voiceMode || 'neural') === 'neural')) {
-      sys('Your neural voice isn\'t ready, so zoope will answer in the meeting chat instead of speaking.');
+    if (!((state.neuralReady || liteReady()) && (state.voiceMode || 'neural') === 'neural')) {
+      sys('Your voice isn\'t made yet, so zoope will answer in the meeting chat instead of speaking.');
     }
     ZoopeBridge.join({ url: r.meeting.link, name: name, title: r.meeting.title, portrait: state.face && state.face.portrait })
       .then(function (sess) {
@@ -1000,6 +1043,12 @@
         if (r.live) {
           if (!r.session) return;
           var neuralOk = state.neuralReady && (state.voiceMode || 'neural') === 'neural' && neuralState === 'ready';
+          if (!neuralOk && liteReady() && (state.voiceMode || 'neural') === 'neural') {
+            line('ai', r.engine.preferred + ' · zoope', text);
+            highlight(null, true);
+            return lite().then(function (m) { return m.speak(text, state.liteVoice, function (l) { r.level = l; }, r.session.voiceOut()); })
+              .catch(function () { line('sys', null, 'The voice failed, so this went to the chat.'); return r.session.chat(text); });
+          }
           if (!neuralOk) {
             line('ai', r.engine.preferred + ' · zoope (chat)', text);
             return r.session.chat(text);
@@ -1318,13 +1367,14 @@
   renderMeetings();
   renderProfile();
   if (voiceSample) $('scanVoiceStatus').textContent = 'Voice scanned. You can scan again at any time.';
-  renderVoice(voiceSample ? (state.neuralReady ? (IS_PHONE ? 'Your voice is made. It loads when zoope first speaks.' : 'Loading your voice…') : IS_PHONE ? PHONE_VOICE_MSG : 'Next, make your voice from this recording.') : null);
+  renderVoice(voiceSample ? (liteReady() && (IS_PHONE || !state.neuralReady) ? 'Your light voice is ready, tuned to your pitch, pace and tone.' : state.neuralReady && !IS_PHONE ? 'Loading your voice…' : IS_PHONE ? PHONE_VOICE_MSG : 'Next, make your voice from this recording.') : null);
   // the model was downloaded before: rebuild the voice in the background
   // reload the voice in the background, except on phones (too heavy to do unasked) or after a crash
   if (neuralCrashed()) {
     markBuilding(false);
     neuralState = 'error';
-    renderVoice('Making your voice closed this tab last time, most likely because the device ran out of memory. Try it on a computer. Until then zoope uses the browser voice tuned to your pitch and pace, which is not your voice.');
+    state.preferLite = true; save();
+    renderVoice('The HD voice closed this tab last time (the device ran out of memory). Press Make my voice to make your light voice, which fits on any device.');
   } else if (voiceSample && state.neuralReady && !IS_PHONE) buildNeural(true);
   go(routeFromHash(), true);
 })();

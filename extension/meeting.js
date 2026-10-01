@@ -153,6 +153,7 @@
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ---- the join flow
+  let joinedAt = 0;
   let state = 'opening', named = new WeakSet(), lastJoin = 0, captionTries = 0, captionsState = null, tick = null;
   function setState(s, detail) {
     if (state === s) return;
@@ -167,7 +168,9 @@
     if (P.ended.test(text) && state !== 'opening') { setState('left', 'The meeting ended or zoope was removed.'); return; }
 
     if (P.inCall()) {
-      if (state !== 'joined') setState('joined');
+      if (state !== 'joined') { setState('joined'); joinedAt = Date.now(); }
+      // some apps (Zoom) only offer audio and video after joining: turn them on in the first half minute
+      if (Date.now() - joinedAt < 30000) { const on = U.find(P.turnOn); if (on) U.click(on); }
       if (captionsState !== 'on' && captionTries < 12) {
         captionTries++;
         captionsState = P.captionsOn();

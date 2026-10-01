@@ -10,3 +10,5 @@ These files are bundled so zoope runs fully offline, with no API calls.
 - `pocket-tts/`: pocket-tts-onnx 0.1.0 (CC BY 4.0, © thewh1teagle), the browser runtime for Kyutai's Pocket TTS. Its imports are rewritten to local paths so it runs without a bundler.
 
 The Pocket TTS weights (~216 MB, CC BY 4.0, Kyutai) are too large for git. zoope downloads them from Hugging Face the first time someone creates a neural voice, and the browser caches them. To self-host them, place the `en/` folder from https://huggingface.co/thewh1teagle/pocket-tts-onnx in `models/pocket-tts/en/`. zoope uses that folder automatically when `manifest.json` is present.
+
+- `espeak-ng/`: eSpeak NG 1.0.2 compiled to WebAssembly (npm `espeak-ng`, GPL-3.0-or-later, see `espeak-ng/LICENSE`). Speech synthesizer behind the light voice.
