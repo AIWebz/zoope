@@ -1083,8 +1083,27 @@
     });
   }
 
+  // Records how long a reply took: from the line being heard to the reply text, and to the voice starting.
+  function timing(r, tText, tVoice, how) {
+    if (r.timed || !r.t0) return;
+    r.timed = true;
+    var t = function (ms) { return (Math.max(0, ms) / 1000).toFixed(1) + ' s'; };
+    var bs = ZoopeBrain.status();
+    var msg = 'Reply text ' + t(tText - r.t0) + ' · voice ' + (tVoice ? t(tVoice - r.t0) : '—') + ' after the line was heard · ' + how +
+      ' · AI ' + (bs.state === 'ready' ? bs.device : bs.state) + (window.crossOriginIsolated ? ' · multi-threaded' : ' · single-threaded');
+    $('diag').textContent = msg;
+    (r.timings = r.timings || []).push({ text: tText - r.t0, voice: tVoice ? tVoice - r.t0 : null, how: how });
+    window.__zoopeTimings = r.timings;
+  }
+  function timedOut(r, out, tText, how) {
+    // voice start = when the first audio is scheduled to play (a wall-clock time, so it works in background tabs)
+    var first = true, onEnv = out.onEnvelope;
+    out.onEnvelope = function (env) { if (first) { first = false; timing(r, tText, env.at, how); } onEnv(env); };
+    return out;
+  }
+
   function aiSay(text, opts) {
-    var r = room, noPause = opts && opts.noPause;
+    var r = room, noPause = opts && opts.noPause, tText = Date.now();
     r.queue = r.queue.then(function () {
       if (room !== r) return;
       // a short natural pause before speaking; in real calls keep it tight so replies don't lag
@@ -1098,21 +1117,23 @@
           if (!neuralOk && liteReady() && (state.voiceMode || 'neural') === 'neural') {
             line('ai', r.engine.preferred + ' · zoope', text);
             highlight(null, true);
-            return lite().then(function (m) { return m.speak(text, state.liteVoice, function (l) { r.level = l; }, r.session.voiceOut()); })
+            return lite().then(function (m) { return m.speak(text, state.liteVoice, function (l) { r.level = l; }, timedOut(r, r.session.voiceOut(), tText, 'light voice')); })
               .catch(function () { line('sys', null, 'The voice failed, so this went to the chat.'); return r.session.chat(text); });
           }
           if (!neuralOk) {
             line('ai', r.engine.preferred + ' · zoope (chat)', text);
+            timing(r, tText, null, 'chat (no voice made)');
             return r.session.chat(text);
           }
           line('ai', r.engine.preferred + ' · zoope', text);
           highlight(null, true);
-          return neural().then(function (m) { return m.speak(text, function (l) { r.level = l; }, r.session.voiceOut()); })
+          return neural().then(function (m) { return m.speak(text, function (l) { r.level = l; }, timedOut(r, r.session.voiceOut(), tText, 'cloned voice')); })
             .catch(function () { line('sys', null, 'The voice failed, so this went to the chat.'); return r.session.chat(text); });
         }
         line('ai', r.engine.preferred + ' · zoope', text);
         highlight(null, true);
-        return speakAs(text, function (l) { r.level = l; });
+        var how = neuralState === 'ready' ? 'cloned voice' : liteReady() ? 'light voice' : 'browser voice';
+        return speakAs(text, function (l) { r.level = l; if (l && (l.open || l) > 0.04) timing(r, tText, Date.now(), how); });
       }).then(function () { highlight(null, false); r.level = 0; });
     });
     return r.queue;
@@ -1124,6 +1145,7 @@
     highlight(speaker, true);
     setTimeout(function () { highlight(speaker, false); }, 900);
     var r = room, before = r.engine.followUps.length;
+    r.t0 = Date.now(); r.timed = false;
     var d = r.engine.hear(speaker, text);
     logDecision(d);
     if (!d.speak) return;

@@ -102,7 +102,7 @@
     lines.forEach((r, el) => {
       const gone = !el.isConnected;
       const ended = /[.?!]$/.test(r.text);
-      if (gone || now - r.changed > (ended ? 350 : 700)) flush(r);
+      if (gone || now - r.changed > (ended ? 280 : 650)) flush(r);
       if (gone) lines.delete(el);
     });
   }

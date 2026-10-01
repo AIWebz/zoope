@@ -1088,3 +1088,5 @@ html.phone body:not([data-route="home"]) .phone-gate {
 
 .line.ping { background: #fff7e6; border: 1px solid #f5c26b; border-radius: var(--r-md); padding: 10px 12px; }
 .line.ping .line-who { color: #b45309; }
+
+.diag { padding: 6px 16px; font: 500 11.5px/1.4 var(--font-mono); color: var(--gray-500); border-bottom: 1px solid var(--gray-150); }
