@@ -69,11 +69,14 @@
       var points = lm.map(function (p) {
         return [Math.round((p.x * vw - sx) * k * 10) / 10, Math.round((p.y * vh - sy) * k * 10) / 10];
       });
+      // depth per landmark, in the same pixel scale as x and y (negative = toward the camera)
+      var depth = lm.map(function (p) { return Math.round(p.z * vw * k * 10) / 10; });
       var faceFrac = ((maxX - minX) * (maxY - minY)) / (vw * vh);
       return {
         kind: 'mesh',
-        photo: crop.toDataURL('image/jpeg', 0.85),
+        photo: crop.toDataURL('image/jpeg', 0.9),
         points: points,
+        depth: depth,
         confidence: Math.min(1, 0.6 + faceFrac * 3)
       };
     });
@@ -291,5 +294,5 @@
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
-  global.ZoopeFaceMesh = { load: load, scan: scan, render: render };
+  global.ZoopeFaceMesh = { load: load, scan: scan, render: render, delaunay: delaunay, SIZE: SIZE, INNER_LIP_LOOP: INNER_LIP_LOOP, UPPER_LIP: UPPER_LIP, LOWER_LIP_INNER: LOWER_LIP_INNER, EYES: EYES };
 })(window);

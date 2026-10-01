@@ -216,10 +216,26 @@
   }
 
   /* Keeps an avatar alive: blinks, idles, and lip-syncs from getLevel() (0..1). */
-  function animate(canvas, face, getLevel) {
-    var stop = false, blinkAt = performance.now() + 2000, mouth = 0;
+  var avatar3dModule = null;
+  function load3D() {
+    if (!avatar3dModule) {
+      avatar3dModule = import(new URL('js/avatar3d.js', document.baseURI).href);
+      avatar3dModule.catch(function () { avatar3dModule = null; });
+    }
+    return avatar3dModule;
+  }
+
+  /*
+   * Keeps an avatar alive: blinks, idles, and lip-syncs from getLevel() (0..1).
+   * Faces scanned with depth get the real 3D model (WebGL); the 2D renderer
+   * draws until it is ready, and is the fallback when WebGL is unavailable.
+   * opts: { interactive, frame: 'head' | 'bust', onReady(info), on3DError(err) }
+   */
+  function animate(canvas, face, getLevel, opts) {
+    opts = opts || {};
+    var stop = false, blinkAt = performance.now() + 2000, mouth = 0, stop3D = null, use2D = true;
     function frame(now) {
-      if (stop) return;
+      if (stop || !use2D) return;
       var target = getLevel ? getLevel() : 0;
       mouth += (target - mouth) * 0.45;
       var blink = 0;
@@ -232,8 +248,25 @@
       requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
-    return function () { stop = true; };
+
+    if (face && face.kind === 'mesh' && face.depth) {
+      load3D().then(function (m) {
+        if (stop || !m.has3D(face) || !m.supported()) return;
+        use2D = false;
+        stop3D = m.attach(canvas, face, getLevel, {
+          interactive: opts.interactive,
+          frame: opts.frame,
+          onReady: opts.onReady,
+          onError: function (err) {
+            // fall back to the 2D renderer
+            stop3D = null; use2D = true; requestAnimationFrame(frame);
+            if (opts.on3DError) opts.on3DError(err);
+          }
+        });
+      }).catch(function (err) { if (opts.on3DError) opts.on3DError(err); });
+    }
+    return function () { stop = true; if (stop3D) stop3D(); };
   }
 
-  global.ZoopeAvatar = { scanFace: scanFace, draw: drawAvatar, animate: animate };
+  global.ZoopeAvatar = { scanFace: scanFace, draw: drawAvatar, animate: animate, load3D: load3D };
 })(window);

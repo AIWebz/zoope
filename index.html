@@ -23,6 +23,7 @@
       <symbol id="i-video" viewBox="0 0 24 24"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10 6-4v12l-6-4"/></symbol>
       <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></symbol>
       <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
       <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
       <symbol id="i-wave" viewBox="0 0 24 24"><path d="M2 12h2M6 8v8M10 5v14M14 8v8M18 10v4M22 12h0"/></symbol>
@@ -59,7 +60,7 @@
         <div class="hero-copy">
           <a href="#/clone" class="announce enter" style="--d:0">
             <span class="announce-tag">New</span>
-            Voice cloning from 26 letters
+            3D avatars and neural voice cloning
             <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg>
           </a>
           <h1 class="hero-wordmark enter" style="--d:1">zoope</h1>
@@ -108,7 +109,7 @@
         <ol class="steps">
           <li><span class="step-num">01</span><h3>Connect</h3><p>Link Zoom, Google Meet or Microsoft Teams, and tell zoope every name people call you.</p></li>
           <li><span class="step-num">02</span><h3>Teach</h3><p>Write the updates and facts it may share. Anything else becomes a follow-up, never a guess.</p></li>
-          <li><span class="step-num">03</span><h3>Clone</h3><p>A 478-point face scan and 26 spoken letters become an avatar that looks and sounds like you.</p></li>
+          <li><span class="step-num">03</span><h3>Clone</h3><p>A 478-point face scan becomes a 3D avatar, and a 15-second recording becomes your voice.</p></li>
           <li><span class="step-num">04</span><h3>Confirm</h3><p>Approve each meeting. zoope joins at the start time and hands you a summary afterwards.</p></li>
         </ol>
       </div>
@@ -148,8 +149,8 @@
           <h2>Everything a stand-in needs. Nothing it doesn't.</h2>
         </header>
         <div class="feature-grid">
-          <article><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg><h3>Photo-real face</h3><p>Your real photo, warped along a 478-point mesh so it talks and blinks.</p></article>
-          <article><svg class="icon" aria-hidden="true"><use href="#i-wave"/></svg><h3>Your voice</h3><p>Built from recordings of you saying the alphabet, stitched together sound by sound.</p></article>
+          <article><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg><h3>3D avatar</h3><p>A real 3D head built from a 478-point face scan. It talks, blinks, and exports as .glb.</p></article>
+          <article><svg class="icon" aria-hidden="true"><use href="#i-wave"/></svg><h3>Your voice</h3><p>A neural model clones your voice from a 15-second sample and speaks any sentence in it.</p></article>
           <article><svg class="icon" aria-hidden="true"><use href="#i-brain"/></svg><h3>Grounded answers</h3><p>Answers only from the notes you write. Unknowns become follow-ups.</p></article>
           <article><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg><h3>Action items</h3><p>“Could you draft the email by Thursday?” lands in your summary with its due date.</p></article>
           <article><svg class="icon" aria-hidden="true"><use href="#i-tag"/></svg><h3>Learns nicknames</h3><p>Hears someone called by an unfamiliar name and asks whether it's you.</p></article>
@@ -163,12 +164,12 @@
         <div class="split-copy">
           <span class="eyebrow">Privacy</span>
           <h2>Your face and voice never leave this device.</h2>
-          <p>The decision engine, face model and voice synthesiser ship with zoope and run in your browser. No API calls, no servers, no uploads.</p>
+          <p>The decision engine, face model, 3D renderer and voice model all run in your browser. There are no API calls and no uploads. The voice model downloads once and is cached on your device.</p>
         </div>
         <dl class="stat-grid">
           <div><dt>AI network requests</dt><dd>0</dd></div>
           <div><dt>Face landmarks</dt><dd>478</dd></div>
-          <div><dt>Voice samples</dt><dd>26</dd></div>
+          <div><dt>Voice sample</dt><dd>15 s</dd></div>
           <div><dt>Data uploaded</dt><dd>0 B</dd></div>
         </dl>
       </div>
@@ -311,7 +312,7 @@
           <header class="page-header">
             <div>
               <h1>Face &amp; voice</h1>
-              <p>Build your avatar from a face scan and your voice from the alphabet. Everything is processed on this device.</p>
+              <p>Generate a 3D avatar from a face scan and clone your voice from a short recording. Everything is processed on this device.</p>
             </div>
             <button type="button" class="btn btn-primary" id="startCam"><svg class="icon" aria-hidden="true"><use href="#i-video"/></svg><span>Enable camera &amp; mic</span></button>
           </header>
@@ -332,14 +333,18 @@
                 </div>
               </div>
               <div class="face-side">
-                <canvas id="avatarCanvas" width="400" height="400"></canvas>
+                <div class="avatar-stage">
+                  <canvas id="avatarCanvas" width="400" height="400"></canvas>
+                  <span class="drag-hint hidden" id="dragHint">Drag to rotate</span>
+                </div>
                 <dl class="kv">
-                  <div><dt>Model</dt><dd>MediaPipe Face Landmarker</dd></div>
+                  <div><dt>Scan</dt><dd>MediaPipe Face Landmarker</dd></div>
                   <div><dt>Avatar</dt><dd id="avatarInfo">None yet</dd></div>
                 </dl>
                 <div class="btn-row">
                   <button type="button" class="btn btn-primary" id="scanFace" disabled><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg>Scan face</button>
                   <button type="button" class="btn btn-secondary" id="testVoice" disabled><svg class="icon" aria-hidden="true"><use href="#i-volume"/></svg>Preview</button>
+                  <button type="button" class="btn btn-secondary" id="downloadModel" disabled title="Download the 3D model as a .glb file"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>.glb</button>
                 </div>
                 <p class="hint" id="scanStatus">Enable the camera, then fit your face inside the oval in good light.</p>
               </div>
@@ -349,13 +354,45 @@
           <section class="panel">
             <div class="panel-head">
               <span class="panel-title">Voice</span>
-              <span class="pill" id="voiceBadge">0 / 26</span>
+              <span class="pill" id="neuralBadge">Not cloned</span>
               <label class="select-inline push">Meeting voice
                 <select id="voiceMode" class="select">
-                  <option value="clone">Cloned voice</option>
+                  <option value="neural">Neural clone</option>
+                  <option value="clone">Alphabet clone</option>
                   <option value="tts">Browser voice</option>
                 </select>
               </label>
+            </div>
+
+            <div class="neural">
+              <div class="neural-copy">
+                <h3>Neural clone <span class="pill pill-accent">Recommended</span></h3>
+                <p class="hint-strong">Read the passage aloud. Pocket TTS, a neural voice model running on this device, learns your voice from the recording and then speaks any sentence as you.</p>
+                <blockquote class="passage">“Hi everyone, thanks for having me. Quick update on the redesign: we're on track, the checkout page is nearly finished, and I'll send notes after the call. Let me know if you have any questions.”</blockquote>
+                <div class="btn-row">
+                  <button type="button" class="btn btn-primary" id="recordVoice" disabled><svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg><span>Record 15s sample</span></button>
+                  <button type="button" class="btn btn-secondary" id="buildNeural" disabled><svg class="icon" aria-hidden="true"><use href="#i-wave"/></svg>Create neural voice</button>
+                  <button type="button" class="btn btn-secondary" id="testNeural" disabled><svg class="icon" aria-hidden="true"><use href="#i-volume"/></svg>Hear it</button>
+                </div>
+                <div class="meter sample-meter"><span id="sampleMeter"></span></div>
+                <div class="progress-row hidden" id="neuralProgress">
+                  <div class="progress"><span id="neuralBar"></span></div>
+                  <span class="mono muted-2" id="neuralPct">0%</span>
+                </div>
+                <p class="hint" id="neuralStatus">Enable the camera &amp; mic, then record a sample.</p>
+              </div>
+              <ul class="neural-facts">
+                <li><b>Model</b><span>Kyutai Pocket TTS, 100M parameters (CC BY 4.0)</span></li>
+                <li><b>Runs</b><span>In your browser (onnxruntime-web)</span></li>
+                <li><b>First use</b><span>Downloads ~216 MB once, then cached</span></li>
+                <li><b>Privacy</b><span>Your voice and text never leave this device</span></li>
+              </ul>
+            </div>
+
+            <div class="subhead">
+              <span>Alphabet clone</span>
+              <span class="pill" id="voiceBadge">0 / 26</span>
+              <span class="muted-2">Offline alternative, built from your recordings of each letter</span>
             </div>
             <div class="voice-grid">
               <div class="letter-stage">
@@ -366,19 +403,12 @@
                 <p class="hint-strong">Say each letter's name clearly (“ay”, “bee”, “see”), then pause. zoope moves on by itself. Select a letter to redo it.</p>
                 <div class="keys" id="alphaGrid"></div>
                 <div class="btn-row">
-                  <button type="button" class="btn btn-primary" id="startAlphabet" disabled><svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg>Record alphabet</button>
+                  <button type="button" class="btn btn-secondary" id="startAlphabet" disabled><svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg>Record alphabet</button>
                   <button type="button" class="btn btn-secondary" id="stopAlphabet" disabled><svg class="icon" aria-hidden="true"><use href="#i-stop"/></svg>Stop</button>
-                  <button type="button" class="btn btn-secondary" id="testClone" disabled><svg class="icon" aria-hidden="true"><use href="#i-volume"/></svg>Hear cloned voice</button>
+                  <button type="button" class="btn btn-secondary" id="testClone" disabled><svg class="icon" aria-hidden="true"><use href="#i-volume"/></svg>Hear alphabet voice</button>
                 </div>
                 <p class="hint" id="alphaStatus">Enable the camera &amp; mic to start.</p>
               </div>
-            </div>
-            <div class="panel-foot backup">
-              <div>
-                <b>Backup voice</b>
-                <span class="muted-2">Read aloud: “Hi everyone, thanks for having me. I'm happy to share a quick update and answer any questions.”</span>
-              </div>
-              <button type="button" class="btn btn-secondary" id="recordVoice" disabled>Record 6s</button>
             </div>
           </section>
         </section>

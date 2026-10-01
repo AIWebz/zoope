@@ -21,8 +21,16 @@ The face model and runtime are bundled in `vendor/` (about 27 MB), so nothing is
 
 1. **Connect** Zoom, Google Meet or Microsoft Teams.
 2. **Names:** zoope asks for your full name, the names and nicknames people call you, and which one to introduce itself with.
-3. **Face clone:** the bundled MediaPipe Face Landmarker finds 478 points on your face. zoope splits your real photo into a triangle mesh and warps it live: the jaw drops and lips part as it talks, and the eyelids close to blink. If the photo shows your teeth, the real teeth part too; otherwise teeth and tongue are drawn in. If the model can't load, zoope falls back to a cartoon avatar (`js/facemesh.js`).
-4. **Voice clone:** you say the alphabet one letter at a time. Every letter name holds English speech sounds ("B" = b + ee, "F" = eh + f, "Y" = w + eye…). zoope cuts your recordings into about 27 sound units. To speak, it turns text into sounds using pronunciation rules and joins your own units with pitch smoothing, intonation and crossfades (`js/voiceclone.js`). You can switch meetings to a smooth browser voice tuned to the pitch and pace from a 6-second sentence recording.
+3. **Face → 3D model:** the bundled MediaPipe Face Landmarker finds 478 points on your face, with depth. `js/avatar3d.js` turns them into a real 3D head:
+   - a textured face surface from your photo
+   - a skull shell stitched to the face outline and coloured from your hair and skin
+   - ears, neck and shoulders, and a mouth interior that opens with the jaw
+
+   It renders with WebGL (three.js), blinks, lip-syncs and moves its head, and you can drag to rotate it. **Download .glb** exports the model. A single front-facing photo can't show the sides or back of the head, so those are modelled, not scanned. Without WebGL, zoope falls back to the animated 2D photo.
+4. **Voice clone:**
+   - **Neural clone (recommended):** read a passage for 15 seconds. Kyutai's Pocket TTS, a 100M-parameter neural TTS model with zero-shot voice cloning, encodes your voice and then generates every sentence in it. It runs in the browser through onnxruntime-web in a Web Worker, so your audio and text are never uploaded. The model weights (~216 MB) download once from Hugging Face and are cached; see `vendor/README.md` to self-host them.
+   - **Alphabet clone (offline):** say A–Z, and zoope stitches your recorded speech sounds together. It's choppier, but works with no download.
+   - **Browser voice:** the system voice, tuned to your pitch and pace.
 5. **Knowledge:** you write the facts and updates zoope is allowed to share. It answers questions by finding the closest match in those notes (TF-IDF).
 6. **Meetings:** zoope only attends meetings you confirm. Confirmed meetings join automatically at their start time while the page is open.
 
@@ -42,5 +50,5 @@ Requests like "Alex, could you draft the email by Thursday?" become action items
 
 ### Limits
 
-- **Face:** the avatar is your real photo, animated. It looks close to you but not perfect. Big head turns, strong expressions, and the inside of the mouth when the photo shows it closed are approximated.
-- **Voice:** the cloned voice is built from your own recorded sounds, so it has your tone. It still sounds choppy and robotic, because the alphabet doesn't cover every English sound (for example "th", short "i", "h" and "ng"), so those are replaced with the closest sounds. Smooth, natural cloning needs a trained neural model, which can't run inside a web page without a server or API.
+- **Face:** the 3D model uses your real face, but it's built from one front photo. The sides and back of the head, hair volume and ears are modelled rather than captured, and turning the head far to the side stretches the cheeks, so rotation is limited.
+- **Voice:** the neural clone captures your timbre and accent from a short sample, but like any zero-shot model it's close rather than perfect, and it improves with a clean, quiet recording. It needs a one-time model download, so the first use needs internet. The alphabet clone is fully offline but choppy.

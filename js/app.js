@@ -240,17 +240,42 @@
   function refreshAvatarBox() {
     if (stopPreview) stopPreview();
     stopPreview = null;
+    var mesh = state.face && state.face.kind === 'mesh', depth = mesh && !!state.face.depth;
+    $('avatarInfo').textContent = !state.face ? 'None yet' : depth ? 'Building 3D model…' : mesh ? 'Photo (rescan for 3D)' : 'Illustrated';
+    $('faceBadge').textContent = !state.face ? 'Not scanned' : depth ? '3D model' : mesh ? 'Photo' : 'Illustrated';
+    $('faceBadge').className = 'pill ' + (state.face ? 'pill-green pill-dot' : '');
+    $('downloadModel').disabled = true;
     if (state.face) {
-      stopPreview = ZoopeAvatar.animate($('avatarCanvas'), state.face, function () { return previewLevel; });
+      stopPreview = ZoopeAvatar.animate($('avatarCanvas'), state.face, function () { return previewLevel; }, {
+        interactive: true,
+        frame: 'head',
+        onReady: function (info) {
+          $('avatarInfo').textContent = '3D · ' + info.vertices + ' vertices · ' + info.triangles + ' faces';
+          $('downloadModel').disabled = false;
+          $('dragHint').classList.remove('hidden');
+        },
+        on3DError: function () { $('avatarInfo').textContent = '2D (WebGL unavailable)'; }
+      });
     } else {
       ZoopeAvatar.draw($('avatarCanvas'), null);
     }
-    var mesh = state.face && state.face.kind === 'mesh';
-    $('avatarInfo').textContent = state.face ? (mesh ? 'Photo-real · 478 points' : 'Illustrated') : 'None yet';
-    $('faceBadge').textContent = state.face ? (mesh ? 'Photo-real' : 'Illustrated') : 'Not scanned';
-    $('faceBadge').className = 'pill ' + (state.face ? 'pill-green pill-dot' : '');
+    if (!depth) $('dragHint').classList.add('hidden');
     $('testVoice').disabled = !state.face;
   }
+
+  $('downloadModel').addEventListener('click', function () {
+    if (!state.face) return;
+    $('downloadModel').disabled = true;
+    ZoopeAvatar.load3D().then(function (m) { return m.exportGLB(state.face); }).then(function (blob) {
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'zoope-avatar.glb';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+      toast('3D model exported (' + Math.round(blob.size / 1024) + ' KB)');
+    }).catch(function (err) { toast('Export failed: ' + err.message, 'error'); })
+      .then(function () { $('downloadModel').disabled = false; });
+  });
 
   $('startCam').addEventListener('click', function () {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -299,7 +324,7 @@
     }).then(function (faces) {
       var best = faces.filter(Boolean).sort(function (a, b) { return b.confidence - a.confidence; })[0];
       if (!best) throw new Error('noface');
-      finishScan(best, 'Face captured from 478 points. Next, record your voice below.');
+      finishScan(best, '3D model generated from 478 depth points. Drag the preview to turn it.');
       toast('Face scanned');
     }).catch(function (err) {
       if (err && err.message === 'noface') {
@@ -322,20 +347,132 @@
     }
   });
 
+  /* ----------------------------- neural voice ----------------------------- */
+  var SAMPLE_SECONDS = 15, SAMPLE_RATE = 24000;
+  var voiceSample = loadSample(), neuralModule = null, neuralState = 'none'; // none | loading | ready | error
+
+  function loadSample() {
+    try {
+      var raw = JSON.parse(localStorage.getItem('zoope-voicesample') || 'null');
+      return raw ? { rate: raw.rate, data: ZoopeVoiceClone.decode(raw.pcm) } : null;
+    } catch (e) { return null; }
+  }
+  function saveSample() {
+    try {
+      localStorage.setItem('zoope-voicesample', JSON.stringify({ rate: voiceSample.rate, pcm: ZoopeVoiceClone.encode(voiceSample.data) }));
+      return true;
+    } catch (e) { return false; }
+  }
+
+  function neural() {
+    if (!neuralModule) {
+      neuralModule = import(new URL('js/neuralvoice.js', document.baseURI).href);
+      neuralModule.catch(function () { neuralModule = null; });
+    }
+    return neuralModule;
+  }
+
+  function renderNeural(msg) {
+    var badge = $('neuralBadge');
+    var labels = { none: voiceSample ? 'Sample recorded' : 'Not cloned', loading: 'Building…', ready: 'Neural clone ready', error: 'Not available' };
+    badge.textContent = labels[neuralState];
+    badge.className = 'pill ' + (neuralState === 'ready' ? 'pill-green pill-dot' : neuralState === 'error' ? 'pill-amber' : '');
+    $('buildNeural').disabled = !voiceSample || neuralState === 'loading';
+    $('testNeural').disabled = neuralState !== 'ready';
+    if (msg) $('neuralStatus').textContent = msg;
+    renderChecklist();
+  }
+
+  function showProgress(frac, label) {
+    $('neuralProgress').classList.remove('hidden');
+    $('neuralBar').style.width = Math.round(frac * 100) + '%';
+    $('neuralPct').textContent = Math.round(frac * 100) + '%';
+    if (label) $('neuralStatus').textContent = label + '…';
+  }
+
+  // Records raw microphone audio for `seconds`, resampled to SAMPLE_RATE.
+  function recordRaw(s, seconds, onTick) {
+    return new Promise(function (resolve, reject) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return reject(new Error('Web Audio is not supported in this browser.'));
+      var ac = new AC(), src = ac.createMediaStreamSource(s), proc = ac.createScriptProcessor(4096, 1, 1), mute = ac.createGain();
+      mute.gain.value = 0;
+      src.connect(proc); proc.connect(mute); mute.connect(ac.destination);
+      var chunks = [], got = 0, need = seconds * ac.sampleRate;
+      proc.onaudioprocess = function (e) {
+        var buf = new Float32Array(e.inputBuffer.getChannelData(0));
+        chunks.push(buf); got += buf.length;
+        var rms = 0; for (var i = 0; i < buf.length; i += 4) rms += buf[i] * buf[i];
+        if (onTick) onTick(got / need, Math.min(1, Math.sqrt(rms / (buf.length / 4)) * 8));
+        if (got >= need) {
+          src.disconnect(); proc.disconnect();
+          var rate = ac.sampleRate; ac.close();
+          var all = new Float32Array(got), off = 0;
+          chunks.forEach(function (c) { all.set(c, off); off += c.length; });
+          resolve(resampleTo(all, rate, SAMPLE_RATE));
+        }
+      };
+    });
+  }
+  function resampleTo(d, from, to) {
+    if (from === to) return d;
+    var ratio = from / to, n = Math.floor(d.length / ratio), out = new Float32Array(n);
+    for (var i = 0; i < n; i++) { var x = i * ratio, i0 = Math.floor(x), f = x - i0; out[i] = d[i0] * (1 - f) + (d[i0 + 1] || 0) * f; }
+    return out;
+  }
+
   $('recordVoice').addEventListener('click', function () {
     if (!stream) return;
-    $('recordVoice').disabled = true;
-    $('recordVoice').textContent = 'Listening…';
-    ZoopeVoice.scanVoice(stream, 6, function (l) { $('meterFill').style.width = (l * 100) + '%'; })
-      .then(function (v) {
-        $('recordVoice').disabled = false;
-        $('recordVoice').textContent = 'Record 6s';
-        if (!v.ok) { toast(v.reason, 'error'); return; }
-        state.voice = v;
-        save();
-        toast('Backup voice tuned to ' + v.pitchHz + ' Hz');
-      })
-      .catch(function (err) { $('recordVoice').disabled = false; $('recordVoice').textContent = 'Record 6s'; toast(err.message, 'error'); });
+    var btn = $('recordVoice'), label = btn.querySelector('span');
+    btn.disabled = true;
+    // the same take also tunes the browser voice (pitch and pace)
+    ZoopeVoice.scanVoice(stream, SAMPLE_SECONDS, null).then(function (v) { if (v.ok) { state.voice = v; save(); } }).catch(function () {});
+    recordRaw(stream, SAMPLE_SECONDS, function (frac, level) {
+      label.textContent = 'Recording… ' + Math.max(0, Math.ceil(SAMPLE_SECONDS * (1 - frac))) + 's';
+      $('sampleMeter').style.width = (level * 100) + '%';
+    }).then(function (data) {
+      $('sampleMeter').style.width = '0%';
+      var peak = 0; for (var i = 0; i < data.length; i += 8) peak = Math.max(peak, Math.abs(data[i]));
+      if (peak < 0.02) { toast('That sample was almost silent. Check your mic and try again.', 'error'); return; }
+      voiceSample = { rate: SAMPLE_RATE, data: data };
+      if (!saveSample()) toast('Browser storage is full, so the sample lasts only until you close this tab.', 'error');
+      neuralState = 'none';
+      state.neuralReady = false; save();
+      renderNeural('Sample saved. Create your neural voice next.');
+      toast('Voice sample recorded');
+    }).catch(function (err) { toast(err.message, 'error'); })
+      .then(function () { btn.disabled = !stream; label.textContent = voiceSample ? 'Record again' : 'Record 15s sample'; });
+  });
+
+  // Loads the model and encodes the user's voice. quiet: no toasts (used for warm-up on later visits).
+  function buildNeural(quiet) {
+    if (!voiceSample || neuralState === 'loading') return Promise.resolve(false);
+    neuralState = 'loading';
+    renderNeural(quiet ? null : 'Loading the voice model…');
+    return neural().then(function (m) {
+      return m.clone(voiceSample.data, voiceSample.rate, function (frac, label) { if (!quiet) showProgress(frac, label); }).then(function () { return m; });
+    }).then(function () {
+      neuralState = 'ready';
+      state.neuralReady = true;
+      if (!state.voiceMode || state.voiceMode === 'clone') { state.voiceMode = 'neural'; $('voiceMode').value = 'neural'; }
+      save();
+      $('neuralProgress').classList.add('hidden');
+      renderNeural('Your neural voice is ready. zoope will speak in it during meetings.');
+      if (!quiet) toast('Neural voice cloned');
+      return true;
+    }).catch(function (err) {
+      neuralState = 'error';
+      $('neuralProgress').classList.add('hidden');
+      renderNeural('Couldn\'t load the voice model (' + (err && err.message ? err.message : 'network error') + '). zoope will use your alphabet clone or the browser voice instead.');
+      if (!quiet) toast('The neural voice model couldn\'t load', 'error');
+      return false;
+    });
+  }
+  $('buildNeural').addEventListener('click', function () { buildNeural(false); });
+  $('testNeural').addEventListener('click', function () {
+    var n = state.profile.preferred || 'your zoope';
+    neural().then(function (m) { return m.speak('Hi everyone, ' + n + ' here. Happy to share a quick update.', function (l) { previewLevel = l; }); })
+      .catch(function (err) { toast(err.message, 'error'); });
   });
 
   $('testVoice').addEventListener('click', function () {
@@ -435,12 +572,18 @@
     var n = state.profile.preferred || 'your zoope';
     cloneVoice.speak('Hi everyone, ' + n + ' here. Happy to share a quick update.', function (l) { previewLevel = l; });
   });
-  $('voiceMode').value = state.voiceMode || 'clone';
+  $('voiceMode').value = state.voiceMode || (state.neuralReady ? 'neural' : 'clone');
   $('voiceMode').addEventListener('change', function () { state.voiceMode = $('voiceMode').value; save(); });
 
   // Speaks as the user: cloned voice when available and chosen, otherwise the tuned browser voice.
   function speakAs(text, onLevel) {
-    if (cloneVoice && (state.voiceMode || 'clone') === 'clone') return cloneVoice.speak(text, onLevel);
+    var mode = state.voiceMode || (state.neuralReady ? 'neural' : 'clone');
+    if (mode === 'neural' && neuralState === 'ready') {
+      return neural().then(function (m) { return m.speak(text, onLevel); }).catch(function () {
+        return cloneVoice ? cloneVoice.speak(text, onLevel) : ZoopeVoice.speak(text, state.voice, onLevel);
+      });
+    }
+    if (cloneVoice && mode !== 'tts') return cloneVoice.speak(text, onLevel);
     return ZoopeVoice.speak(text, state.voice, onLevel);
   }
 
@@ -451,7 +594,7 @@
       { label: 'Add your names', done: state.profile.names.length > 0 && state.chatStep === 'done', route: 'setup' },
       { label: 'Write knowledge', done: !!state.profile.knowledge, route: 'setup' },
       { label: 'Scan your face', done: !!state.face, route: 'clone' },
-      { label: 'Clone your voice', done: hasClone(), route: 'clone' },
+      { label: 'Clone your voice', done: hasClone() || !!state.neuralReady, route: 'clone' },
       { label: 'Confirm a meeting', done: state.meetings.some(function (m) { return m.confirmed; }), route: 'meetings' }
     ];
   }
@@ -589,7 +732,7 @@
     var out = [];
     if (!state.profile.names.length) out.push('add your names');
     if (!state.face) out.push('scan your face');
-    if (!state.voice && !hasClone()) out.push('record your voice');
+    if (!state.voice && !hasClone() && !state.neuralReady) out.push('record your voice');
     return out;
   }
 
@@ -656,7 +799,7 @@
     $('speaker').innerHTML = people.map(function (p) { return '<option>' + esc(p) + '</option>'; }).join('');
     $('transcript').innerHTML = '';
     $('decisionLog').innerHTML = '';
-    room.stopAnim = ZoopeAvatar.animate($('roomAvatar'), state.face, function () { return room ? room.level : 0; });
+    room.stopAnim = ZoopeAvatar.animate($('roomAvatar'), state.face, function () { return room ? room.level : 0; }, { frame: 'bust' });
 
     sys('Joined as ' + (profile.preferred || 'you') + '. Type what people say below, or use Listen.');
     var problems = readinessProblems();
@@ -920,5 +1063,8 @@
   rebuildClone();
   renderAlphabet(null);
   renderMeetings();
+  renderNeural(voiceSample ? (state.neuralReady ? 'Loading your neural voice…' : 'Sample saved. Create your neural voice next.') : null);
+  // the model was downloaded before: rebuild the voice in the background
+  if (voiceSample && state.neuralReady) buildNeural(true);
   go(routeFromHash(), true);
 })();
