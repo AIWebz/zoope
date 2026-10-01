@@ -23,10 +23,20 @@
   /* ------------------------------ storage ------------------------------ */
   var state = load();
   function load() {
-    var def = { platforms: {}, profile: { fullName: '', names: [], preferred: '', knowledge: '' }, face: null, voice: null, meetings: [], chatStep: 'name' };
+    var def = { platforms: {}, profile: { fullName: '', names: [], preferred: '', knowledge: '', notes: [] }, face: null, voice: null, meetings: [], summaries: [], chatStep: 'name' };
     try {
       var raw = localStorage.getItem('zoope');
-      if (raw) { var s = JSON.parse(raw); for (var k in def) if (!(k in s)) s[k] = def[k]; return s; }
+      if (raw) {
+        var s = JSON.parse(raw);
+        for (var k in def) if (!(k in s)) s[k] = def[k];
+        if (!s.profile.notes) s.profile.notes = [];
+        // older versions kept one block of "knowledge"; it becomes a background note
+        if (s.profile.knowledge && !s.profile.notes.length) {
+          s.profile.notes.push({ id: 'n' + Date.now().toString(36), kind: 'info', text: s.profile.knowledge, created: Date.now() });
+          s.profile.knowledge = '';
+        }
+        return s;
+      }
     } catch (e) { /* storage unavailable */ }
     return def;
   }
@@ -141,14 +151,14 @@
   });
 
   var ASK = {
-    name: function () { bot('Hi, I\'m zoope. I\'ll attend meetings for you as your AI assistant. First, what\'s your full name?'); },
+    name: function () { bot('Hi, I\'m zoope. I\'ll attend meetings as you. First, what\'s your full name?'); },
     nicknames: function () {
       bot('Nice to meet you, ' + state.profile.fullName.split(' ')[0] + '. What names do people call you by? Include nicknames, short names or initials, separated by commas.');
     },
     preferred: function () { bot('Got it: ' + state.profile.names.join(', ') + '. Which one should I introduce myself with?'); },
     more: function () { bot('Any other names people use for you, like a work nickname? Type "no" if that\'s all.'); },
     done: function () {
-      bot('All set. I\'ll answer to ' + state.profile.names.join(', ') + ' and introduce myself as ' + state.profile.preferred + '\'s AI assistant. Type "change" to start over.');
+      bot('All set. I\'ll answer to ' + state.profile.names.join(', ') + ' and introduce myself as ' + state.profile.preferred + '. Type "change" to start over.');
     }
   };
 
@@ -206,25 +216,58 @@
     }
   }
 
-  /* ------------------------------ knowledge ------------------------------ */
-  function factCount(text) { return new ZoopeKnowledgeBase(text).sentences.length; }
-  function renderKnowledgeStatus(saved) {
-    var n = factCount(state.profile.knowledge || '');
-    $('knowledgeSaved').textContent = saved ? 'Saved · ' + n + ' fact' + (n === 1 ? '' : 's')
-      : (n ? n + ' fact' + (n === 1 ? '' : 's') + ' saved' : 'No notes yet');
+  /* -------------------------------- notes -------------------------------- */
+  function relTime(t) {
+    var d = Date.now() - t, m = Math.round(d / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return m + ' min ago';
+    var h = Math.round(m / 60);
+    if (h < 24) return h + ' h ago';
+    return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
-  $('knowledge').value = state.profile.knowledge || '';
-  $('knowledge').addEventListener('input', function () {
-    var dirty = $('knowledge').value.trim() !== (state.profile.knowledge || '');
-    $('knowledgeSaved').textContent = dirty ? 'Unsaved changes' : $('knowledgeSaved').textContent;
-    $('saveKnowledge').className = 'btn ' + (dirty ? 'btn-primary' : 'btn-secondary');
-  });
-  $('saveKnowledge').addEventListener('click', function () {
-    state.profile.knowledge = $('knowledge').value.trim();
+
+  function renderNotes() {
+    var notes = state.profile.notes || [];
+    var pending = notes.filter(function (n) { return n.kind === 'share'; }).length;
+    $('noteCountPill').textContent = notes.length;
+    $('navNoteCount').textContent = pending || '';
+    $('notesTeaser').textContent = notes.length
+      ? notes.length + ' note' + (notes.length === 1 ? '' : 's') + (pending ? ', ' + pending + ' to bring up in your next meeting' : '') + '.'
+      : 'No notes yet.';
+    if (!notes.length) {
+      $('noteList').innerHTML = '<div class="empty"><div class="empty-icon">' + icon('note') + '</div><h3>No notes yet</h3>' +
+        '<p>Send zoope what it should know, like a status update, or something to tell the team.</p></div>';
+      return;
+    }
+    $('noteList').innerHTML = notes.slice().sort(function (x, y) { return y.created - x.created; }).map(function (n) {
+      var pill = n.kind === 'share' ? '<span class="pill pill-accent pill-dot">Next meeting</span>'
+        : n.kind === 'shared' ? '<span class="pill pill-green pill-dot">Shared</span>' : '<span class="pill">Background</span>';
+      var meta = n.kind === 'shared' ? 'Said in ' + esc(n.sharedIn || 'a meeting') + ', ' + relTime(n.sharedAt) : 'Sent ' + relTime(n.created);
+      if (n.kind === 'share') meta += ' · zoope will bring this up';
+      return '<div class="note-row" data-id="' + n.id + '">' + pill + '<div><p>' + esc(n.text) + '</p><small>' + meta + '</small></div>' +
+        '<button type="button" class="btn btn-ghost btn-sm btn-icon" data-del="' + n.id + '" aria-label="Delete note" title="Delete">' + icon('trash') + '</button></div>';
+    }).join('');
+  }
+
+  $('noteForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var text = $('noteText').value.trim();
+    if (!text) return;
+    var kind = document.querySelector('input[name="noteKind"]:checked').value;
+    state.profile.notes.push({ id: 'n' + Date.now().toString(36), kind: kind, text: text, created: Date.now() });
     save();
-    renderKnowledgeStatus(true);
-    $('saveKnowledge').className = 'btn btn-secondary';
-    toast('Knowledge saved');
+    $('noteText').value = '';
+    renderNotes();
+    toast(kind === 'share' ? 'Sent. zoope will bring it up in your next meeting.' : 'Sent. zoope will use it when asked.');
+  });
+  $('noteText').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('noteForm').requestSubmit();
+  });
+  $('noteList').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-del]');
+    if (!b) return;
+    state.profile.notes = state.profile.notes.filter(function (n) { return n.id !== b.dataset.del; });
+    save(); renderNotes();
   });
 
   /* ---------------------------- face + voice scan ---------------------------- */
@@ -618,7 +661,7 @@
     return [
       { label: 'Link a meeting account', done: Object.keys(state.platforms).length > 0, route: 'setup' },
       { label: 'Add your names', done: state.profile.names.length > 0 && state.chatStep === 'done', route: 'setup' },
-      { label: 'Write knowledge', done: !!state.profile.knowledge, route: 'setup' },
+      { label: 'Send zoope a note', done: (state.profile.notes || []).length > 0, route: 'notes' },
       { label: 'Scan your head (4 views)', done: typeof SCAN_STEPS !== 'undefined' && scanCount() === 4, route: 'clone' },
       { label: 'Make your voice', done: !!state.neuralReady, route: 'clone' },
       { label: 'Confirm a meeting', done: state.meetings.some(function (m) { return m.confirmed; }), route: 'meetings' }
@@ -730,7 +773,7 @@
       confirmDialog({
         title: 'Send zoope to “' + m.title + '”?',
         body: 'At ' + esc(fmtDate(m.time).time || 'the start time') + ', zoope opens the meeting room for this ' + PLATFORMS[m.platform].name +
-          ' meeting and speaks as <b>' + esc(state.profile.preferred || 'your') + '\'s AI assistant</b>, with your avatar and voice.' +
+          ' meeting and speaks as <b>' + esc(state.profile.preferred || 'you') + '</b>, with your avatar and voice.' +
           (missing.length ? '<div class="dialog-note">Not ready yet: ' + esc(missing.join('; ')) + '.</div>' : ''),
         ok: 'Approve'
       }).then(function (ok) {
@@ -783,7 +826,7 @@
     var people = m.people.length ? m.people : ['Sam', 'Priya', 'Jordan'];
     var profile = JSON.parse(JSON.stringify(state.profile));
     if (!profile.names.length) { profile.names = ['you']; profile.preferred = 'You'; }
-    if (opts.sampleKnowledge && !profile.knowledge) profile.knowledge = SAMPLE_KNOWLEDGE;
+    if (opts.sampleKnowledge && !(profile.notes || []).length) profile.knowledge = SAMPLE_KNOWLEDGE;
 
     room = {
       meeting: m,
@@ -886,6 +929,15 @@
     $('decisionLog').prepend(el);
   }
 
+  $('liveNoteForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var v = $('liveNote').value.trim();
+    if (!v || !room) return;
+    $('liveNote').value = '';
+    sys('Your note: ' + v);
+    aiSay(room.engine.relay(v));
+  });
+
   $('sayForm').addEventListener('submit', function (e) {
     e.preventDefault();
     var v = $('sayInput').value.trim();
@@ -918,7 +970,7 @@
     joinMeeting(demoMeeting, { sampleKnowledge: true });
     $('demoIntro').classList.add('hidden');
     $('demoBtnTop').classList.add('hidden');
-    if (!state.profile.knowledge) sys('No knowledge saved, so this demo uses sample notes.');
+    if (!(state.profile.notes || []).length) sys('You haven\'t sent zoope any notes, so this demo uses sample notes.');
     var me = room.engine.preferred;
     var script = [
       ['Sam', 'Hi everyone! Can everyone hear me okay?'],
@@ -954,6 +1006,7 @@
     clearInterval(r.timer);
     if (r.stopAnim) r.stopAnim();
     if (window.speechSynthesis) speechSynthesis.cancel();
+    if (r.onLeave) r.onLeave();
     setListenLabel(false);
     $('room').classList.add('hidden');
     if (r.page === 'demo') {
@@ -961,34 +1014,99 @@
       $('demoBtnTop').classList.remove('hidden');
       $('demoBtnTop').querySelector('span').textContent = 'Run again';
     }
-    if (showSummary) renderSummary(r);
+    var summary = finishMeeting(r);
+    if (showSummary && summary) renderSummary(summary, $('summary').parentNode);
     else $('summary').classList.add('hidden');
   }
 
-  function renderSummary(r) {
-    var s = r.engine.summary();
+  // Writes the meeting's summary, keeps it in the history, and marks shared notes as said.
+  function finishMeeting(r) {
+    var people = r.engine.history.filter(function (h) { return !h.ai; });
+    if (!people.length) return null;
+    var p = state.profile;
+    var sum = ZoopeSummarize.summarize(r.engine.history, {
+      title: r.meeting.title, platform: PLATFORMS[r.meeting.platform] ? PLATFORMS[r.meeting.platform].name : '',
+      started: r.started, ended: Date.now(), user: r.engine.preferred,
+      userNames: (p.names || []).concat(p.fullName ? [p.fullName] : []), attendees: r.people,
+      followUps: r.engine.followUps, sharedNotes: r.engine.sharedNotes
+    });
+    sum.id = 's' + Date.now().toString(36);
+    sum.demo = !!r.meeting.demo;
+    sum.unknownNames = r.engine.unknownNames;
+    if (!r.meeting.demo) {
+      var ids = r.engine.sharedNotes.map(function (n) { return n.id; });
+      (p.notes || []).forEach(function (n) {
+        if (ids.indexOf(n.id) >= 0) { n.kind = 'shared'; n.sharedIn = r.meeting.title; n.sharedAt = Date.now(); }
+      });
+    }
+    state.summaries = [sum].concat(state.summaries || []).slice(0, 40);
+    save();
+    renderNotes();
+    renderSummaries();
+    return sum;
+  }
+
+  var shownSummary = null;
+  function renderSummary(sum, container) {
+    shownSummary = sum;
+    container.appendChild($('summary'));
     function section(title, items, fmt) {
-      return '<div class="summary-section"><h3>' + title + '</h3>' +
-        (items.length ? '<ul>' + items.map(fmt).join('') + '</ul>' : '<p class="summary-empty">None</p>') + '</div>';
+      if (!items.length) return '';
+      return '<div class="summary-section"><h3>' + title + '</h3><ul>' + items.map(fmt).join('') + '</ul></div>';
     }
-    var html = '<dl class="summary-stats">' +
-      '<div><dt>Lines</dt><dd>' + s.turns + '</dd></div>' +
-      '<div><dt>zoope replied</dt><dd>' + s.spoke + '</dd></div>' +
-      '<div><dt>Stayed quiet</dt><dd>' + s.stayedQuiet + '</dd></div>' +
-      '<div><dt>Action items</dt><dd>' + s.actionItems.length + '</dd></div></dl>';
-    if (s.unknownNames.length) {
-      html += s.unknownNames.map(function (n) {
-        return '<div class="summary-section name-ask"><p>Someone was called <b>“' + esc(n) + '”</b>. Do people call you that?</p>' +
-          '<button type="button" class="btn btn-secondary btn-sm" data-addname="' + esc(n) + '">Add to my names</button></div>';
-      }).join('');
-    }
-    html += section('Action items', s.actionItems, function (a) { return '<li><div>' + esc(a.text) + ' <span>· ' + esc(a.from) + (a.due ? ', ' + esc(a.due) : '') + '</span></div></li>'; }) +
-      section('Follow-ups zoope promised', s.followUps, function (f) { return '<li><div>' + esc(f.text) + ' <span>· ' + esc(f.from) + '</span></div></li>'; }) +
-      '<div class="summary-section"><h3>Topics</h3>' + (s.topics.length ? '<div class="topic-row">' + s.topics.map(function (t) { return '<span class="pill">' + esc(t) + '</span>'; }).join('') + '</div>' : '<p class="summary-empty">None</p>') + '</div>';
+    var html = '<p class="sum-overview">' + esc(sum.overview) + '</p>';
+    (sum.unknownNames || []).forEach(function (n) {
+      html += '<div class="summary-section name-ask"><p>Someone was called <b>“' + esc(n) + '”</b>. Do people call you that?</p>' +
+        '<button type="button" class="btn btn-secondary btn-sm" data-addname="' + esc(n) + '">Add to my names</button></div>';
+    });
+    html += section('Key points', sum.keyPoints, function (k) { return '<li><div><b>' + esc(k.speaker) + ':</b> ' + esc(k.text) + '</div></li>'; }) +
+      section('Decisions', sum.decisions, function (d) { return '<li><div>' + esc(d.text) + ' <span>· ' + esc(d.speaker) + '</span></div></li>'; }) +
+      section('Action items', sum.actionItems, function (a) {
+        return '<li><div><b>' + esc(a.owner) + ':</b> ' + esc(a.task) + (a.due ? ' <span>· ' + esc(a.due) + '</span>' : '') +
+          (a.owner !== a.from ? ' <span>(asked by ' + esc(a.from) + ')</span>' : '') + '</div></li>';
+      }) +
+      section('Waiting on you', sum.followUps, function (f) { return '<li><div>' + esc(f.from) + ' asked: “' + esc(f.text) + '”</div></li>'; }) +
+      section('Shared from your notes', sum.sharedNotes, function (n) { return '<li><div>' + esc(n) + '</div></li>'; }) +
+      section('What your avatar said', sum.said, function (t) { return '<li><div>' + esc(t) + '</div></li>'; });
+    $('summaryTitle').textContent = sum.title + (sum.started ? ' · ' + new Date(sum.started).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
     $('summaryBody').innerHTML = html;
     $('summary').classList.remove('hidden');
     $('summary').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
+
+  $('copySummary').addEventListener('click', function () {
+    if (!shownSummary) return;
+    (navigator.clipboard ? navigator.clipboard.writeText(shownSummary.markdown) : Promise.reject())
+      .then(function () { toast('Summary copied'); }, function () { toast('Copy isn\'t available here. Use .md instead.', 'error'); });
+  });
+  $('downloadSummary').addEventListener('click', function () {
+    if (!shownSummary) return;
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([shownSummary.markdown], { type: 'text/markdown' }));
+    a.download = (shownSummary.title || 'meeting').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-summary.md';
+    document.body.appendChild(a); a.click(); a.remove();
+  });
+
+  function renderSummaries() {
+    var list = state.summaries || [];
+    $('navSummaryCount').textContent = list.length || '';
+    if (!list.length) {
+      $('summaryList').innerHTML = '<div class="empty"><div class="empty-icon">' + icon('list') + '</div><h3>No summaries yet</h3>' +
+        '<p>After zoope attends a meeting (or you run the demo), its summary appears here.</p><a href="#/demo" class="btn btn-secondary">Run the demo</a></div>';
+      return;
+    }
+    $('summaryList').innerHTML = list.map(function (sm) {
+      var when = sm.started ? new Date(sm.started).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+      return '<div class="sum-row" data-sum="' + sm.id + '"><div><b>' + esc(sm.title) + (sm.demo ? ' <span class="pill">Demo</span>' : '') + '</b><p>' + esc(sm.overview) + '</p></div>' +
+        '<span class="mono muted-2">' + esc(when) + '</span></div>';
+    }).join('');
+  }
+  $('summaryList').addEventListener('click', function (e) {
+    var row = e.target.closest('[data-sum]');
+    if (!row) return;
+    var sm = (state.summaries || []).filter(function (x) { return x.id === row.dataset.sum; })[0];
+    if (sm) renderSummary(sm, $('summarySlot'));
+  });
 
   $('summaryBody').addEventListener('click', function (e) {
     var n = e.target.dataset.addname;
@@ -1000,8 +1118,8 @@
   });
 
   /* ------------------------------- routing ------------------------------- */
-  var ROUTES = ['home', 'setup', 'clone', 'demo', 'meetings'];
-  var TITLES = { home: 'zoope', setup: 'Setup', clone: 'Face & voice', demo: 'Demo meeting', meetings: 'Meetings' };
+  var ROUTES = ['home', 'setup', 'clone', 'notes', 'demo', 'meetings', 'summaries'];
+  var TITLES = { home: 'zoope', setup: 'Setup', clone: 'Face & voice', notes: 'Notes', demo: 'Demo meeting', meetings: 'Meetings', summaries: 'Summaries' };
   var currentRoute = null, navToken = 0;
   var reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -1085,7 +1203,8 @@
   renderPlatforms();
   renderChips();
   startChat();
-  renderKnowledgeStatus(false);
+  renderNotes();
+  renderSummaries();
   refreshAvatarBox();
   renderMeetings();
   renderProfile();

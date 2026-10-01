@@ -23,6 +23,8 @@
   var FAREWELL = /\b(bye|goodbye|see you|talk soon|that's all|thats all|wrap (it )?up|end the (call|meeting)|have a good (one|day|weekend))\b/i;
   var THANKS = /\b(thanks|thank you|cheers|appreciate it)\b/i;
   var HEAR_CHECK = /\b(can (you|everyone|everybody|you all|y'all|people) hear (me|us)|are you (there|with us)|you on mute|are you muted)\b/i;
+  // a sincere question about whether this is a person or an AI (always answered truthfully)
+  var AI_CHECK = /\b(are you (a |an )?(bot|ai|robot|machine|real person|human|recording|avatar|deepfake)|are you real|is (this|that) (really|actually|even) (you|him|her|them)|am i (talking|speaking) (to|with) (a |an )?(bot|ai|robot|machine|person|human|real)|is this (a |an )?(bot|ai|recording|deepfake)|you sound like (a |an )?(robot|bot|ai)|is (this|that) an? (ai|bot))/i;
   var INTRO = /\b(introduce yourself|who('s| is) (this|that|on the call|joining)|who are you|what should we call you|what do (we|people) call you|what's your name|what is your name)\b/i;
   var UPDATE = /\b(update|status|progress|how('s| is) (it|that|the \w+) going|where are (we|you) (at|with)|what are you working on|what have you been|what's new|anything new)\b/i;
   var AVAIL = /\b(available|free|can you make|does .* work for you|what time works|schedule|calendar|when can you)\b/i;
@@ -125,7 +127,12 @@
     if (profile.fullName) this.names.push(norm(profile.fullName).split(/\s+/)[0]);
     this.names = this.names.filter(function (n, i, a) { return a.indexOf(n) === i; });
     this.preferred = profile.preferred || (profile.names && profile.names[0]) || (profile.fullName || 'me').split(' ')[0];
-    this.kb = new KnowledgeBase(profile.knowledge || '');
+    // notes the user sent to zoope: background facts, and things to bring up in the meeting
+    var notes = (profile.notes || []).filter(function (n) { return n && n.text; });
+    var noteText = notes.map(function (n) { return n.text.replace(/[.!?]?\s*$/, '.'); }).join(' ');
+    this.kb = new KnowledgeBase(((profile.knowledge || '') + ' ' + noteText).trim());
+    this.pendingShares = notes.filter(function (n) { return n.kind === 'share'; }).map(function (n) { return { id: n.id, text: n.text }; });
+    this.sharedNotes = [];
     this.attendees = (opts.attendees || []).map(function (a) { return a.trim(); }).filter(Boolean);
     this.threshold = opts.threshold || 0.5;
     this.history = [];
@@ -251,6 +258,11 @@
       reasons.push('Question about something I know (+' + r.toFixed(2) + ')');
     }
 
+    if (intent === 'aicheck' && !other) {
+      score += 0.9;
+      reasons.push('Asked whether this is an AI: always answered truthfully (+0.9)');
+    }
+
     if ((intent === 'hearcheck' || intent === 'intro') && !other) {
       score += 0.4;
       reasons.push('Check-in / introduction request (+0.4)');
@@ -286,9 +298,10 @@
 
     score = Math.max(-1, Math.min(1.5, score));
     var speak = score >= this.threshold;
+    this.addressedByName = nameUse === 'vocative';
     var reply = speak ? this.respond(speaker, t, intent, hits) : null;
-    if (reply && /notes say/.test(reply) && this.history.some(function (h) { return h.ai && h.text === reply; })) {
-      reply = 'As I mentioned, ' + reply;
+    if (reply && this.history.some(function (h) { return h.ai && h.text === reply; }) && reply.length > 40) {
+      reply = 'Like I said, ' + reply.charAt(0).toLowerCase() + reply.slice(1);
     }
     if (!speak) reasons.push('Staying quiet (' + score.toFixed(2) + ' < ' + this.threshold + ')');
 
@@ -305,6 +318,7 @@
   };
 
   ZoopeEngine.prototype.intentOf = function (t) {
+    if (AI_CHECK.test(t)) return 'aicheck';
     if (HEAR_CHECK.test(t)) return 'hearcheck';
     if (INTRO.test(t)) return 'intro';
     if (FAREWELL.test(t)) return 'farewell';
@@ -333,11 +347,11 @@
   };
 
   /*
-   * Honesty rules for everything zoope says:
-   *  - it says it is an AI assistant attending for the user, never the user;
-   *  - facts come only from the user's own notes, quoted as theirs;
-   *  - it never agrees, commits or gives an opinion on the user's behalf;
-   *  - when it doesn't know, it says so and passes the question on.
+   * How zoope speaks: in the first person, as the user, from the user's notes.
+   *  - facts come only from the user's notes (and only clearly matching ones);
+   *  - it never agrees, commits or gives an opinion beyond those notes;
+   *  - when it doesn't know, it says it will follow up after the call;
+   *  - asked sincerely whether it is an AI, it says so. It never denies it.
    */
   ZoopeEngine.prototype.respond = function (speaker, t, intent, hits) {
     var who = String(speaker || '').split(/\s+/)[0];
@@ -349,52 +363,99 @@
       known = hits[0].text;
     }
     var me = this.preferred;
-    var owner = me + '\'s';
-    var notes = function (k) { self.lastNote = k; self.lastNoteTurn = self.turn; return owner + ' notes say: “' + k + '”'; };
+    var say = function (k) { self.lastNote = k; self.lastNoteTurn = self.turn; return k; };
+    var reply;
 
     switch (intent) {
+      case 'aicheck':
+        reply = 'Fair question. This is my AI avatar, speaking for me from my notes. I\'m not on the call live, and I\'ll get a summary afterwards.';
+        break;
       case 'hearcheck':
-        return pick(['Yes, I can hear you.', 'Yes, ' + who + ', I can hear you.'], seed);
+        reply = pick(['Yes, I can hear you.', 'Yes, ' + who + ', loud and clear.'], seed);
+        break;
       case 'intro':
         var others = this.names.filter(function (n) { return norm(n) !== norm(me) && n.indexOf(' ') < 0; }).map(capitalise);
-        return 'I\'m zoope, an AI assistant attending for ' + (this.profile.fullName || me) + '. ' +
-          (others.length ? me + ' also goes by ' + others.slice(0, 2).join(' or ') + '. ' : '') +
-          'I can share ' + owner + ' notes and take questions back to them.';
+        reply = 'Hi, I\'m ' + (this.profile.fullName || me) + '. ' + (others.length ? me + ' is fine, or ' + others.slice(0, 2).join(' or ') + '.' : 'Call me ' + me + '.');
+        break;
       case 'greeting':
-        return pick(['Hi ' + who + '.', 'Hello everyone.'], seed);
+        reply = pick(['Hi ' + who + '.', 'Hey ' + who + '.', 'Hi everyone.'], seed);
+        break;
       case 'farewell':
-        return 'Thanks everyone. I\'ll pass a summary of this meeting to ' + me + '.';
+        reply = 'Thanks everyone, talk soon.';
+        if (this.pendingShares.length) reply = 'Before we wrap up, one thing from me: ' + this.takeShares() + ' ' + reply;
+        break;
       case 'thanks':
-        return 'You\'re welcome.';
+        reply = 'Sure thing.';
+        break;
       case 'request':
         var dl = t.match(DEADLINE);
-        return 'I can\'t commit on ' + owner + ' behalf, but I\'ve added this to ' + owner + ' action items' +
-          (dl ? ', ' + dl[0] : '') + ', and ' + me + ' will confirm.';
+        reply = 'Noted' + (dl ? ', ' + dl[0] : '') + '. I\'ll confirm after the call.';
+        break;
       case 'availability':
-        if (known) return notes(known);
+        if (known) { reply = say(known); break; }
         this.followUp(speaker, t);
-        return 'I don\'t have access to ' + owner + ' calendar, so I\'ll pass that question on.';
+        reply = 'Let me check my calendar and get back to you after the call.';
+        break;
       case 'update':
-        if (known) return notes(known);
+        var parts = [];
+        if (known) parts.push(say(known));
+        if (this.pendingShares.length) parts.push(this.takeShares());
+        if (parts.length) { reply = parts.join(' '); break; }
         this.followUp(speaker, t);
-        return me + ' didn\'t leave me an update on that. I\'ll pass the question on.';
+        reply = 'I don\'t have an update on that in front of me. I\'ll send one after the call.';
+        break;
       case 'opinion':
-        if (known) return notes(known);
+        if (known) { reply = say(known); break; }
         this.followUp(speaker, t);
-        return 'I won\'t guess ' + owner + ' opinion. I\'ll pass the question on.';
+        reply = 'I\'d like to look at that properly before giving an opinion. I\'ll follow up after the call.';
+        break;
       case 'question':
-        if (known) { this.answered++; return notes(known); }
+        if (known) { this.answered++; reply = say(known); break; }
         this.followUp(speaker, t);
-        return 'I don\'t know that, and I won\'t guess. I\'ll pass it to ' + me + '.';
+        reply = 'I don\'t have that in front of me, ' + who + '. I\'ll get back to you after the call.';
+        break;
       default:
-        if (known) return notes(known);
-        return 'Noted. I\'ll include that in ' + owner + ' summary.';
+        reply = known ? say(known) : 'Got it, thanks ' + who + '.';
     }
+    // the first time zoope is addressed, it also brings up anything the user asked it to share
+    if (this.pendingShares.length && this.addressedByName && ['aicheck', 'farewell', 'update', 'hearcheck', 'greeting'].indexOf(intent) < 0 && !this.sharedOnce) {
+      this.sharedOnce = true;
+      reply += ' Also, quick note from me: ' + this.takeShares();
+    }
+    return reply;
+  };
+
+  // Turns a note into something said in the meeting: "Tell Priya the budget is approved" -> "Priya, the budget is approved."
+  function noteToSpeech(text) {
+    var t = String(text).trim().replace(/\s+/g, ' ');
+    var m = t.match(/^(?:please\s+)?(?:tell|let)\s+([A-Z][\w'-]*|everyone|everybody|the team|them|people)\s+(?:know\s+)?(?:that\s+)?(.+)$/i);
+    if (m) {
+      var who = /^(everyone|everybody|the team|them|people)$/i.test(m[1]) ? '' : capitalise(m[1]) + ', ';
+      t = who + m[2];
+    } else {
+      t = t.replace(/^(?:please\s+)?(?:say|mention|share|bring up|let everyone know|let the team know)\s+(?:that\s+)?/i, '');
+    }
+    t = t.charAt(0).toUpperCase() + t.slice(1);
+    return /[.!?]$/.test(t) ? t : t + '.';
+  }
+
+  ZoopeEngine.prototype.takeShares = function () {
+    var out = this.pendingShares.map(function (n) { return noteToSpeech(n.text); }).join(' ');
+    this.sharedNotes = this.sharedNotes.concat(this.pendingShares);
+    this.pendingShares = [];
+    return out;
+  };
+
+  // A note the user sends during the meeting, to be said at the next pause.
+  ZoopeEngine.prototype.relay = function (text) {
+    var line = noteToSpeech(text);
+    this.kb = new KnowledgeBase(this.kb.sentences.concat([text]).join(' '));
+    this.said(line);
+    return line;
   };
 
   ZoopeEngine.prototype.greetOnJoin = function () {
-    var line = 'Hi everyone, I\'m zoope, ' + this.preferred + '\'s AI assistant. I\'ll share ' + this.preferred +
-      '\'s notes and pass anything else on.';
+    var line = 'Hi everyone, ' + this.preferred + ' here.';
     // the join greeting shouldn't count against turn-taking
     this.history.push({ turn: this.turn, speaker: this.preferred, text: line, ai: true });
     return line;
@@ -421,5 +482,6 @@
   };
 
   global.ZoopeEngine = ZoopeEngine;
+  global.ZoopeNoteToSpeech = noteToSpeech;
   global.ZoopeKnowledgeBase = KnowledgeBase;
 })(window);

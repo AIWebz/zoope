@@ -24,6 +24,8 @@
       <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></symbol>
       <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
       <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></symbol>
+      <symbol id="i-note" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
       <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
       <symbol id="i-wave" viewBox="0 0 24 24"><path d="M2 12h2M6 8v8M10 5v14M14 8v8M18 10v4M22 12h0"/></symbol>
@@ -211,9 +213,12 @@
         <span class="side-label">Onboarding</span>
         <a href="#/setup" data-route="setup"><svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg><span>Setup</span><i class="nav-state" data-state="setup"></i></a>
         <a href="#/clone" data-route="clone"><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg><span>Face &amp; voice</span><i class="nav-state" data-state="clone"></i></a>
+        <span class="side-label">Your AI</span>
+        <a href="#/notes" data-route="notes"><svg class="icon" aria-hidden="true"><use href="#i-note"/></svg><span>Notes</span><i class="nav-count" id="navNoteCount"></i></a>
         <span class="side-label">Meetings</span>
         <a href="#/demo" data-route="demo"><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg><span>Demo meeting</span></a>
         <a href="#/meetings" data-route="meetings"><svg class="icon" aria-hidden="true"><use href="#i-calendar"/></svg><span>Meetings</span><i class="nav-count" id="navMeetingCount"></i></a>
+        <a href="#/summaries" data-route="summaries"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg><span>Summaries</span><i class="nav-count" id="navSummaryCount"></i></a>
       </nav>
 
       <div class="checklist" id="checklist">
@@ -294,15 +299,12 @@
 
           <section class="setting">
             <div class="setting-meta">
-              <h2>Knowledge</h2>
-              <p>Updates, facts and opinions zoope may share. It never answers beyond these; anything else becomes a follow-up.</p>
+              <h2>Notes</h2>
+              <p>Facts and updates zoope may share for you. Send them on the Notes page, any time before a meeting.</p>
             </div>
-            <div class="panel">
-              <textarea id="knowledge" class="textarea" rows="7" placeholder="The website redesign is 80% done and launches on October 14. I'm working on the checkout page this week. Budget questions should go to Priya." aria-label="Knowledge"></textarea>
-              <div class="panel-foot">
-                <span class="muted-2" id="knowledgeSaved">No notes yet</span>
-                <button type="button" class="btn btn-secondary" id="saveKnowledge">Save</button>
-              </div>
+            <div class="panel notes-teaser">
+              <p id="notesTeaser">No notes yet.</p>
+              <a href="#/notes" class="btn btn-secondary">Open notes</a>
             </div>
           </section>
         </section>
@@ -431,6 +433,48 @@
           </section>
         </section>
 
+        <!-- ================================ Notes ================================ -->
+        <section class="page app-page" data-page="notes">
+          <header class="page-header">
+            <div>
+              <h1>Notes</h1>
+              <p>Send zoope notes before a meeting. It answers questions from them in your words, and brings up the ones you mark.</p>
+            </div>
+          </header>
+
+          <section class="panel">
+            <form id="noteForm" class="note-composer">
+              <textarea id="noteText" class="textarea" rows="3" placeholder="e.g. The redesign launches on October 14.   ·   Tell Priya the budget is approved." aria-label="Note to zoope" required></textarea>
+              <div class="panel-foot">
+                <div class="seg" role="radiogroup" aria-label="How zoope uses this note">
+                  <label><input type="radio" name="noteKind" value="info" checked><span>Background</span></label>
+                  <label><input type="radio" name="noteKind" value="share"><span>Bring up in next meeting</span></label>
+                </div>
+                <button class="btn btn-primary"><svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg>Send to zoope</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head"><span class="panel-title">Sent notes</span><span class="pill" id="noteCountPill">0</span></div>
+            <div id="noteList"></div>
+          </section>
+        </section>
+
+        <!-- ============================== Summaries ============================== -->
+        <section class="page app-page" data-page="summaries">
+          <header class="page-header">
+            <div>
+              <h1>Summaries</h1>
+              <p>A written summary of every meeting zoope attends: key points, decisions, action items, and what's waiting on you.</p>
+            </div>
+          </header>
+          <section class="panel">
+            <div id="summaryList"></div>
+          </section>
+          <div class="slot" id="summarySlot"></div>
+        </section>
+
         <!-- ================================ Demo ================================ -->
         <section class="page app-page" data-page="demo">
           <header class="page-header">
@@ -511,6 +555,10 @@
               <div class="room-side">
                 <div class="side-head">Transcript</div>
                 <div class="transcript" id="transcript" aria-live="polite"></div>
+                <form id="liveNoteForm" class="composer composer-note">
+                  <input id="liveNote" class="input" autocomplete="off" placeholder="Note to zoope: it says this at the next pause" aria-label="Note to zoope">
+                  <button class="btn btn-secondary">Send</button>
+                </form>
                 <form id="sayForm" class="composer composer-room">
                   <select id="speaker" class="select" aria-label="Speaker"></select>
                   <input id="sayInput" class="input" autocomplete="off" placeholder="What does this person say?" aria-label="Line">
@@ -525,7 +573,13 @@
           </section>
 
           <section id="summary" class="panel hidden">
-            <div class="panel-head"><span class="panel-title">Meeting summary</span></div>
+            <div class="panel-head">
+              <span class="panel-title" id="summaryTitle">Meeting summary</span>
+              <div class="room-actions">
+                <button type="button" class="btn btn-secondary btn-sm" id="copySummary"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg>Copy</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="downloadSummary"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>.md</button>
+              </div>
+            </div>
             <div id="summaryBody"></div>
           </section>
         </div>
@@ -547,6 +601,7 @@
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <script src="js/engine.js"></script>
+  <script src="js/summarize.js"></script>
   <script src="js/facemesh.js"></script>
   <script src="js/headscan.js"></script>
   <script src="js/avatar.js"></script>
