@@ -98,7 +98,18 @@
     captionsOn: () => { const off = find([/^turn on captions/i]); return off ? click(off) && 'clicked' : find([/^turn off captions/i]) ? 'on' : null; },
     captions() {
       const region = first('[role="region"][aria-label*="aption" i]');
-      return region ? blocksWithNames(region) : [];
+      if (!region) return [];
+      const found = blocksWithNames(region);
+      if (found.length) return found;
+      // no avatar images: take each caption block whose text is "Name\nwords"
+      const out = [];
+      region.querySelectorAll(':scope > div, :scope > div > div').forEach((el) => {
+        const lines = (el.innerText || '').split('\n').map(norm).filter(Boolean);
+        if (lines.length >= 2 && lines[0].length <= 40 && !out.some((o) => o.el.contains(el) || el.contains(o.el))) {
+          out.push({ el, speaker: lines[0], text: lines.slice(1).join(' ') });
+        }
+      });
+      return out;
     },
     leave: [/^leave call$/i],
     leaveConfirm: [/^just leave the call$/i, /^leave call$/i],

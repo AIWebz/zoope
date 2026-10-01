@@ -30,6 +30,9 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       // ---- from the zoope tab
       case 'join': {
         const t = await chrome.tabs.create({ url: msg.url, active: true });
+        // the zoope tab runs the call from the background: don't let Chrome discard either tab
+        chrome.tabs.update(tab, { autoDiscardable: false }).catch(() => {});
+        chrome.tabs.update(t.id, { autoDiscardable: false }).catch(() => {});
         const id = 'z' + Date.now().toString(36);
         const all = await sessions();
         all[id] = {

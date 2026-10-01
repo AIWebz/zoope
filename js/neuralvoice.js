@@ -205,7 +205,7 @@ export async function speak(text, onLevel, out) {
   await ac.resume();
   const dest = out ? out.destination : ac.destination;
   const mouth = mouthTimeline(ac, onLevel);
-  let cursor = 0, started = false, lastEnd = 0;
+  let cursor = 0, started = false, lastEnd = 0, lastSrc = null;
   const play = (frames) => {
     if (!started || cursor < ac.currentTime + 0.02) cursor = ac.currentTime + 0.04;
     started = true;
@@ -217,6 +217,7 @@ export async function speak(text, onLevel, out) {
       src.connect(dest);
       src.start(cursor);
       mouth.add(frame, engine.sampleRate, cursor);
+      lastSrc = src;
       if (out && out.onEnvelope) out.onEnvelope(envelope(frame, engine.sampleRate, Date.now() + (cursor - ac.currentTime) * 1000));
       cursor += buf.duration;
     }
@@ -243,7 +244,8 @@ export async function speak(text, onLevel, out) {
     // learn: more buffer after a stutter, less when it was smooth
     leadSeconds = underruns ? Math.min(1.5, leadSeconds * 1.6) : Math.max(0.15, leadSeconds * 0.9);
   }
-  await new Promise((resolve) => setTimeout(resolve, Math.max(0, (lastEnd - ac.currentTime) * 1000) + 40));
+  // wait for the last piece of audio to finish (an audio event, which background tabs don't delay)
+  if (lastSrc && lastEnd > ac.currentTime) await new Promise((resolve) => { lastSrc.onended = resolve; });
   mouth.stop();
   if (!out) ac.close();
 }
