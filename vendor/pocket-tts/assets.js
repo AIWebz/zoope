@@ -54,22 +54,46 @@ export async function fetchAsset(url, onProgress, version) {
     const body = response.body;
     if (!body)
         return response.arrayBuffer();
-    const chunks = [];
+    // zoope: when the size is known, stream straight into one buffer instead of
+    // holding the chunks and a joined copy at once (half the peak memory on phones)
     let loaded = 0;
     const reader = body.getReader();
-    for (;;) {
-        const { done, value } = await reader.read();
-        if (done)
-            break;
-        chunks.push(value);
-        loaded += value.byteLength;
-        onProgress?.({ loaded, total, cached: false });
+    let bytes;
+    if (total > 0) {
+        bytes = new Uint8Array(total);
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done)
+                break;
+            if (loaded + value.byteLength > bytes.byteLength) {
+                const grown = new Uint8Array(Math.max(bytes.byteLength * 1.25, loaded + value.byteLength));
+                grown.set(bytes.subarray(0, loaded));
+                bytes = grown;
+            }
+            bytes.set(value, loaded);
+            loaded += value.byteLength;
+            onProgress?.({ loaded, total, cached: false });
+        }
+        if (loaded !== bytes.byteLength)
+            bytes = bytes.slice(0, loaded);
     }
-    const bytes = new Uint8Array(loaded);
-    let at = 0;
-    for (const chunk of chunks) {
-        bytes.set(chunk, at);
-        at += chunk.byteLength;
+    else {
+        const chunks = [];
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done)
+                break;
+            chunks.push(value);
+            loaded += value.byteLength;
+            onProgress?.({ loaded, total, cached: false });
+        }
+        bytes = new Uint8Array(loaded);
+        let at = 0;
+        for (const chunk of chunks) {
+            bytes.set(chunk, at);
+            at += chunk.byteLength;
+        }
+        chunks.length = 0;
     }
     await cachePut(key, bytes.buffer);
     return bytes.buffer;

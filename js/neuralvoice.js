@@ -96,6 +96,17 @@ function resample(data, from, to) {
 
 /* Encodes the user's voice from mono samples at `rate`. Up to 20 s is used. */
 export async function clone(samples, rate, onProgress) {
+  try {
+    return await cloneOnce(samples, rate, onProgress);
+  } catch (err) {
+    // a phone can run out of memory part-way; start over once in a fresh worker,
+    // with nothing else loaded, before giving up
+    reset();
+    if (onProgress) onProgress(0, 'Retrying with a clean start');
+    return await cloneOnce(samples, rate, onProgress);
+  }
+}
+async function cloneOnce(samples, rate, onProgress) {
   const e = await load(onProgress);
   const input = resample(samples, rate, e.sampleRate);
   const result = await e.clone(input, (stage, p) => {
@@ -104,6 +115,11 @@ export async function clone(samples, rate, onProgress) {
   clonedSeconds = result.seconds;
   if (result.cond) await saveVoice(result.cond, result.seconds);
   return result;
+}
+/* Drops the worker and everything loaded in it. */
+export function reset() {
+  if (engine) { try { engine.dispose(); } catch (e) { /* gone */ } }
+  engine = null; enginePromise = null; clonedSeconds = 0;
 }
 
 /* Loads the model with the voice made earlier on this device. Resolves false when there is none. */

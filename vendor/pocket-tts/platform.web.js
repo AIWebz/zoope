@@ -38,7 +38,8 @@ export async function cachePut(key, bytes) {
     // Never fail a load over the cache: quota is easy to exceed, and the model
     // still works, it just downloads again next time.
     try {
-        await (await open())?.put(key, new Response(bytes.slice(0)));
+        // zoope: on phones, don't make an extra copy of a model just to cache it
+        await (await open())?.put(key, new Response(globalThis.ZOOPE_LOW_MEMORY ? bytes : bytes.slice(0)));
     }
     catch {
         /* not cached */
