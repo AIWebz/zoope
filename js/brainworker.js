@@ -1,7 +1,7 @@
 /*
  * zoope's language model, in a Web Worker so the page stays smooth.
  *
- * Runs a small instruction-tuned model (Qwen2.5 0.5B Instruct, 4-bit) with
+ * Runs an instruction-tuned model (Qwen2.5 1.5B Instruct on a GPU, 0.5B otherwise; 4-bit) with
  * transformers.js on WebGPU when available, else WebAssembly. Weights come
  * from Hugging Face (or its mirror) once and are cached by the browser.
  */
@@ -18,10 +18,11 @@ async function library() {
     : new TextDecoder().decode(bytes);
   return import(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
 }
-let pipeline, env;
-const libReady = library().then((m) => { pipeline = m.pipeline; env = m.env; setup(); });
+let pipeline, env, TextStreamer;
+const libReady = library().then((m) => { pipeline = m.pipeline; env = m.env; TextStreamer = m.TextStreamer; setup(); });
 
-const MODEL = 'onnx-community/Qwen2.5-0.5B-Instruct';
+// a bigger, smarter model when a GPU is available; the small one on CPU
+const MODELS = { webgpu: ['onnx-community/Qwen2.5-1.5B-Instruct', 'onnx-community/Qwen2.5-0.5B-Instruct'], wasm: ['onnx-community/Qwen2.5-0.5B-Instruct'] };
 function setup() {
   env.allowLocalModels = false;
   env.backends.onnx.wasm.wasmPaths = new URL('../vendor/transformers/', import.meta.url).href;
@@ -32,23 +33,37 @@ async function load(id) {
   await libReady;
   const webgpu = !!(self.navigator && navigator.gpu && await navigator.gpu.requestAdapter().catch(() => null));
   const progress = (p) => { if (p && p.status === 'progress' && p.total) self.postMessage({ id, kind: 'progress', loaded: p.loaded, total: p.total, file: p.file }); };
-  const opts = { dtype: webgpu ? 'q4f16' : 'q4', device: webgpu ? 'webgpu' : 'wasm', progress_callback: progress };
-  for (const host of ['https://huggingface.co/', 'https://hf-mirror.com/']) {
-    try {
-      env.remoteHost = host;
-      gen = await pipeline('text-generation', MODEL, opts);
-      self.postMessage({ id, kind: 'ready', device: opts.device });
-      return;
-    } catch (err) { if (host.includes('mirror')) throw new Error('model download: ' + (err && err.message)); }
+  const device = webgpu ? 'webgpu' : 'wasm';
+  const opts = { dtype: webgpu ? 'q4f16' : 'q4', device, progress_callback: progress };
+  let lastErr = null;
+  for (const model of MODELS[device]) {
+    for (const host of ['https://huggingface.co/', 'https://hf-mirror.com/']) {
+      try {
+        env.remoteHost = host;
+        gen = await pipeline('text-generation', model, opts);
+        self.postMessage({ id, kind: 'ready', device, model });
+        return;
+      } catch (err) { lastErr = err; }
+    }
   }
+  throw new Error('model download: ' + (lastErr && lastErr.message));
 }
 
+// Generates a reply token by token, streaming it to the page so speech can start at the first sentence.
+let stopFlag = false;
 async function ask(id, messages, maxTokens) {
   if (!gen) throw new Error('the model is not loaded');
-  const out = await gen(messages, { max_new_tokens: maxTokens || 48, do_sample: false, repetition_penalty: 1.1 });
-  const last = out[0].generated_text;
-  const text = Array.isArray(last) ? last[last.length - 1].content : String(last);
-  self.postMessage({ id, kind: 'answer', text: text.trim() });
+  stopFlag = false;
+  const streamer = new TextStreamer(gen.tokenizer, {
+    skip_prompt: true, skip_special_tokens: true,
+    callback_function: (text) => { if (stopFlag) throw new Error('__stop'); self.postMessage({ id, kind: 'token', text }); }
+  });
+  try {
+    await gen(messages, { max_new_tokens: maxTokens || 80, do_sample: true, temperature: 0.7, top_p: 0.9, repetition_penalty: 1.1, streamer });
+  } catch (err) {
+    if (!/__stop/.test(String(err && err.message))) throw err;
+  }
+  self.postMessage({ id, kind: 'done' });
 }
 
 self.onmessage = async (e) => {
@@ -56,6 +71,7 @@ self.onmessage = async (e) => {
   try {
     if (m.kind === 'load') await load(m.id);
     else if (m.kind === 'ask') await ask(m.id, m.messages, m.maxTokens);
+    else if (m.kind === 'stop') stopFlag = true;
   } catch (err) {
     self.postMessage({ id: m.id, kind: 'error', message: err && err.message ? err.message : String(err) });
   }
