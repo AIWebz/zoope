@@ -95,9 +95,55 @@
           };
           if (face.head.crownPx < 0) face.head.crownPx = 0; // hair cut off by the top of the frame
         }
+        face.portrait = buildPortrait(frame, face, crop, seg, st);
         return { ok: true, face: face };
-      }).catch(function () { return { ok: true, face: face }; }); // segmentation is a bonus for the front
+      }).catch(function () {
+        // segmentation is a bonus for the front
+        try { if (!face.portrait) face.portrait = buildPortrait(frame, face, crop, null, null); } catch (e) { /* keep the scan */ }
+        return { ok: true, face: face };
+      });
     });
+  }
+
+  /*
+   * The live portrait: the full camera frame at up to 960 px wide, with the 478
+   * landmarks (and their depth) in its pixel space, a soft person mask and the
+   * head outline. The portrait renderer animates this real photo.
+   */
+  var PORTRAIT_W = 960, MASK_W = 160;
+  function buildPortrait(frame, face, crop, seg, st) {
+    var s = Math.min(1, PORTRAIT_W / frame.width), W = Math.round(frame.width * s), H = Math.round(frame.height * s);
+    var c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    var ctx = c.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(frame, 0, 0, W, H);
+    var toP = s / crop.k, r1 = function (v) { return Math.round(v * 10) / 10; };
+    var pts = face.points.map(function (p, i) {
+      return [r1((p[0] / crop.k + crop.sx) * s), r1((p[1] / crop.k + crop.sy) * s), r1(face.depth[i] * toP)];
+    });
+
+    // person mask (anything that isn't background), small and slightly blurred
+    var mask = null;
+    if (seg) {
+      var mw = MASK_W, mh = Math.round(MASK_W * H / W);
+      var src = document.createElement('canvas');
+      src.width = seg.w; src.height = seg.h;
+      var sctx = src.getContext('2d'), img = sctx.createImageData(seg.w, seg.h);
+      for (var i = 0; i < seg.cats.length; i++) {
+        var v = seg.cats[i] === 0 ? 0 : 255;
+        img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255;
+      }
+      sctx.putImageData(img, 0, 0);
+      var m = document.createElement('canvas');
+      m.width = mw; m.height = mh;
+      var mctx = m.getContext('2d');
+      mctx.filter = 'blur(1px)';
+      mctx.drawImage(src, 0, 0, mw, mh);
+      mask = m.toDataURL('image/png');
+    }
+    var head = st ? { top: r1(st.top * s), bottom: r1(st.bottom * s), left: r1(st.left * s), right: r1(st.right * s) } : null;
+    return { photo: c.toDataURL('image/jpeg', 0.92), w: W, h: H, pts: pts, mask: mask, head: head };
   }
 
   /*

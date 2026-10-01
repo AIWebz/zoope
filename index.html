@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>zoope</title>
-  <meta name="description" content="zoope is an AI assistant that stands in for you at meetings, with a 3D avatar of you and a voice made from yours. It always says it is an AI, and runs on your device.">
+  <meta name="description" content="zoope joins your Zoom, Google Meet and Teams calls as you, with a live photo-real avatar and your cloned voice, takes your notes, and writes meeting summaries. Runs on your device.">
   <meta name="theme-color" content="#ffffff">
   <link rel="preload" href="vendor/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="css/style.css">
@@ -66,7 +66,7 @@
             <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg>
           </a>
           <h1 class="hero-wordmark enter" style="--d:1">zoope</h1>
-          <p class="hero-lede enter" style="--d:2">An AI assistant that stands in for you at meetings, with a 3D avatar of you, a voice made from yours, and the judgement to know when to speak. It always says it's an AI.</p>
+          <p class="hero-lede enter" style="--d:2">An AI assistant that stands in for you at meetings, with a 3D avatar of you, a voice made from yours, and the judgement to know when to speak. It joins your real Zoom, Meet and Teams calls and speaks as you, and if someone sincerely asks, it says it's an AI.</p>
           <div class="hero-actions enter" style="--d:3">
             <a href="#/setup" class="btn btn-primary btn-lg">Get started <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a>
             <a href="#/demo" class="btn btn-secondary btn-lg"><svg class="icon icon-fill" aria-hidden="true"><use href="#i-play"/></svg> Watch the demo</a>
@@ -95,7 +95,7 @@
 
     <section class="band band-logos">
       <div class="wrap logos-row">
-        <span class="eyebrow">Plan meetings from</span>
+        <span class="eyebrow">Joins meetings on</span>
         <span class="logo-item"><img src="assets/zoom.jpg" alt=""> Zoom</span>
         <span class="logo-item"><img src="assets/meet.png" alt=""> Google Meet</span>
         <span class="logo-item"><img src="assets/teams.webp" alt=""> Microsoft Teams</span>
@@ -307,6 +307,22 @@
               <a href="#/notes" class="btn btn-secondary">Open notes</a>
             </div>
           </section>
+
+          <section class="setting">
+            <div class="setting-meta">
+              <h2>Join real meetings</h2>
+              <p>The zoope extension opens your meeting in the Zoom, Google Meet or Teams web app, joins with your name, and uses your avatar and voice as its camera and microphone.</p>
+            </div>
+            <div class="panel ext-panel">
+              <div class="ext-status"><span class="pill" id="extStatus">Not installed</span><span class="hint" id="extHint">Install it in Chrome or Edge to join actual calls.</span></div>
+              <ol class="ext-steps">
+                <li>Open <code>chrome://extensions</code> and turn on <b>Developer mode</b>.</li>
+                <li>Click <b>Load unpacked</b> and pick the <code>extension</code> folder from zoope.</li>
+                <li>Reload this page. Meetings with a link then join for real.</li>
+              </ol>
+              <p class="hint">zoope follows the meeting through its live captions and turns them on when it can. It runs on this computer, so keep this tab open during the meeting.</p>
+            </div>
+          </section>
         </section>
 
         <!-- ============================ Face & voice ============================ -->
@@ -353,6 +369,10 @@
                 <div class="avatar-stage">
                   <canvas id="avatarCanvas" width="400" height="400"></canvas>
                   <span class="drag-hint hidden" id="dragHint">Drag to rotate</span>
+                  <div class="seg stage-mode hidden" id="avatarMode" role="radiogroup" aria-label="Avatar view">
+                    <label><input type="radio" name="avatarMode" value="live" checked><span>Live</span></label>
+                    <label><input type="radio" name="avatarMode" value="3d"><span>3D model</span></label>
+                  </div>
                 </div>
                 <dl class="kv">
                   <div><dt>Model</dt><dd id="avatarInfo">None yet</dd></div>
@@ -539,7 +559,9 @@
               <span class="panel-title" id="roomTitle">Meeting</span>
               <span class="pill" id="roomPlatform">Zoom</span>
               <span class="mono muted-2" id="roomTimer">00:00</span>
+              <span class="pill hidden" id="roomState"></span>
               <div class="room-actions">
+                <button type="button" class="btn btn-secondary btn-sm hidden" id="focusMeeting"><svg class="icon" aria-hidden="true"><use href="#i-external"/></svg>Meeting tab</button>
                 <button type="button" class="btn btn-secondary btn-sm" id="listenBtn"><svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg><span>Listen</span></button>
                 <button type="button" class="btn btn-secondary btn-sm" id="demoBtn"><svg class="icon icon-fill" aria-hidden="true"><use href="#i-play"/></svg>Replay</button>
                 <button type="button" class="btn btn-danger btn-sm" id="leaveRoom">Leave</button>
@@ -601,6 +623,7 @@
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <script src="js/engine.js"></script>
+  <script src="js/bridge.js"></script>
   <script src="js/summarize.js"></script>
   <script src="js/facemesh.js"></script>
   <script src="js/headscan.js"></script>

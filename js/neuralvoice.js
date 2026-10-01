@@ -76,15 +76,18 @@ export async function clone(samples, rate, onProgress) {
 /*
  * Speaks text in the cloned voice, streaming frames to the speakers as they are
  * generated. onLevel(0..1) drives the avatar's mouth.
+ * out (optional): { context, destination, onEnvelope({ at, step, levels }) } sends
+ * the voice into a stream (a real meeting) instead of the speakers; the mouth
+ * envelope is reported with wall-clock times so a remote avatar can follow it.
  */
-export async function speak(text, onLevel) {
+export async function speak(text, onLevel, out) {
   if (!ready()) throw new Error('No cloned voice yet');
   const AC = window.AudioContext || window.webkitAudioContext;
-  const ac = new AC({ sampleRate: engine.sampleRate });
+  const ac = out ? out.context : new AC({ sampleRate: engine.sampleRate });
   await ac.resume();
   const analyser = ac.createAnalyser();
   analyser.fftSize = 512;
-  analyser.connect(ac.destination);
+  analyser.connect(out ? out.destination : ac.destination);
   const td = new Float32Array(analyser.fftSize);
   let playing = true, lastEnd = 0;
   (function meter() {
@@ -107,13 +110,27 @@ export async function speak(text, onLevel) {
     src.connect(analyser);
     if (cursor < ac.currentTime) cursor = ac.currentTime + 0.02;
     src.start(cursor);
+    if (out && out.onEnvelope) out.onEnvelope(envelope(frame, engine.sampleRate, Date.now() + (cursor - ac.currentTime) * 1000));
     cursor += buf.duration;
     lastEnd = cursor;
   }
   await new Promise((resolve) => setTimeout(resolve, Math.max(0, (lastEnd - ac.currentTime) * 1000) + 60));
   playing = false;
+  analyser.disconnect();
   if (onLevel) onLevel(0);
-  ac.close();
+  if (!out) ac.close();
+}
+
+/* Mouth openness every 20 ms of a chunk of samples, starting at wall-clock time `at`. */
+export function envelope(samples, rate, at) {
+  const step = 20, n = Math.max(1, Math.round(rate * step / 1000)), levels = [];
+  for (let i = 0; i < samples.length; i += n) {
+    let rms = 0;
+    const end = Math.min(samples.length, i + n);
+    for (let j = i; j < end; j++) rms += samples[j] * samples[j];
+    levels.push(Math.round(Math.min(1, Math.sqrt(rms / (end - i)) * 5) * 100) / 100);
+  }
+  return { at, step, levels };
 }
 
 export function cancel() { if (engine) engine.cancel(); }

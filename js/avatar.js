@@ -215,8 +215,7 @@
     ctx.restore();
   }
 
-  /* Keeps an avatar alive: blinks, idles, and lip-syncs from getLevel() (0..1). */
-  var avatar3dModule = null;
+  var avatar3dModule = null, portraitModule = null;
   function load3D() {
     if (!avatar3dModule) {
       avatar3dModule = import(new URL('js/avatar3d.js', document.baseURI).href);
@@ -224,16 +223,24 @@
     }
     return avatar3dModule;
   }
+  function loadPortrait() {
+    if (!portraitModule) {
+      portraitModule = import(new URL('js/portrait.js', document.baseURI).href);
+      portraitModule.catch(function () { portraitModule = null; });
+    }
+    return portraitModule;
+  }
 
   /*
    * Keeps an avatar alive: blinks, idles, and lip-syncs from getLevel() (0..1).
-   * Faces scanned with depth get the real 3D model (WebGL); the 2D renderer
-   * draws until it is ready, and is the fallback when WebGL is unavailable.
-   * opts: { interactive, frame: 'head' | 'bust', onReady(info), on3DError(err) }
+   * By default a scan is shown as the live portrait (the real photo, animated
+   * with depth); mode '3d' shows the 360° head model instead. The 2D renderer
+   * draws until either is ready, and is the fallback when WebGL is unavailable.
+   * opts: { mode: 'live' | '3d', interactive, frame: 'head' | 'bust', onReady(info), on3DError(err) }
    */
   function animate(canvas, face, getLevel, opts) {
     opts = opts || {};
-    var stop = false, blinkAt = performance.now() + 2000, mouth = 0, stop3D = null, use2D = true;
+    var stop = false, blinkAt = performance.now() + 2000, mouth = 0, stopGL = null, use2D = true;
     function frame(now) {
       if (stop || !use2D) return;
       var target = getLevel ? getLevel() : 0;
@@ -249,24 +256,31 @@
     }
     requestAnimationFrame(frame);
 
-    if (face && face.kind === 'mesh' && face.depth) {
+    function fallback(err) {
+      stopGL = null; use2D = true; requestAnimationFrame(frame);
+      if (opts.on3DError) opts.on3DError(err);
+    }
+    var want3D = opts.mode === '3d' || !(face && face.portrait);
+    if (face && face.kind === 'mesh' && !want3D) {
+      loadPortrait().then(function (m) {
+        if (stop || !m.has(face) || !m.supported()) return;
+        use2D = false;
+        stopGL = m.attach(canvas, face, getLevel, { frame: opts.frame, onReady: opts.onReady, onError: fallback });
+      }).catch(function (err) { if (opts.on3DError) opts.on3DError(err); });
+    } else if (face && face.kind === 'mesh' && face.depth) {
       load3D().then(function (m) {
         if (stop || !m.has3D(face) || !m.supported()) return;
         use2D = false;
-        stop3D = m.attach(canvas, face, getLevel, {
+        stopGL = m.attach(canvas, face, getLevel, {
           interactive: opts.interactive,
           frame: opts.frame,
-          onReady: opts.onReady,
-          onError: function (err) {
-            // fall back to the 2D renderer
-            stop3D = null; use2D = true; requestAnimationFrame(frame);
-            if (opts.on3DError) opts.on3DError(err);
-          }
+          onReady: function (info) { info.kind = '3d'; if (opts.onReady) opts.onReady(info); },
+          onError: fallback
         });
       }).catch(function (err) { if (opts.on3DError) opts.on3DError(err); });
     }
-    return function () { stop = true; if (stop3D) stop3D(); };
+    return function () { stop = true; if (stopGL) stopGL(); };
   }
 
-  global.ZoopeAvatar = { scanFace: scanFace, draw: drawAvatar, animate: animate, load3D: load3D };
+  global.ZoopeAvatar = { scanFace: scanFace, draw: drawAvatar, animate: animate, load3D: load3D, loadPortrait: loadPortrait };
 })(window);

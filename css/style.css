@@ -666,6 +666,8 @@ body[data-route="home"] .app { display: none; }
   overflow: hidden;
 }
 #avatarCanvas { display: block; width: 100%; height: 100%; }
+.stage-mode { position: absolute; top: 8px; left: 8px; z-index: 1; background: rgba(255, 255, 255, .9); }
+.stage-mode span { padding: 3px 8px; font-size: 12px; }
 .drag-hint {
   position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
   padding: 2px 8px; border-radius: var(--r-sm);
@@ -846,7 +848,7 @@ body[data-route="home"] .app { display: none; }
 }
 .tile.speaking { box-shadow: inset 0 0 0 2px #22c55e; }
 .tile canvas { position: absolute; top: 0; left: 50%; height: 100%; width: auto; aspect-ratio: 1; transform: translateX(-50%); }
-.tile canvas[aria-label="3D avatar"] { left: 0; width: 100%; aspect-ratio: auto; transform: none; }
+.tile canvas[aria-label="3D avatar"], .tile canvas[aria-label="Live avatar"] { left: 0; width: 100%; aspect-ratio: auto; transform: none; }
 .initials {
   width: 52px; height: 52px; border-radius: 50%;
   display: grid; place-items: center;
@@ -1054,3 +1056,9 @@ body.leaving .site, body.leaving .app { opacity: 0; transition: opacity .16s eas
   .select-inline { margin-left: 0; }
   .toasts { left: 16px; right: 16px; bottom: 16px; align-items: stretch; }
 }
+
+/* extension status on Setup */
+.ext-panel { padding: 20px; display: grid; gap: 14px; }
+.ext-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ext-steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; color: var(--gray-700); }
+.ext-steps code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12.5px; padding: 1px 5px; border-radius: 4px; background: var(--gray-100); }

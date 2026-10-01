@@ -30,12 +30,27 @@ The face, segmentation, 3D and voice runtimes are bundled in `vendor/`. The only
 4. **Voice (two steps):**
    1. **Scan your voice:** read a passage for 15 seconds. zoope measures your typical pitch, pitch range, speaking pace and brightness (timbre), and plots your pitch contour.
    2. **Make your voice:** Kyutai's Pocket TTS, a 100M-parameter neural TTS model with zero-shot voice cloning, encodes that recording and then generates every sentence in your voice. It runs in the browser through onnxruntime-web in a Web Worker, and nothing is uploaded. The weights (~216 MB) download once from Hugging Face and are cached; see `vendor/README.md` to self-host them. If the model can't load, zoope falls back to the browser's voice tuned to your measured pitch and pace, and tells you that it is not your voice.
-5. **Knowledge:** you write the facts and updates zoope is allowed to share. It answers questions by finding the closest match in those notes (TF-IDF).
+   The front scan also keeps a **live portrait** (`js/portrait.js`): the full camera photo with its 478 landmarks, depth and a person mask. This is what meetings show. A depth mesh over your real photo turns, nods and tilts your head slightly, opens your jaw in time with your voice, blinks, moves your eyes and breathes, with light sensor grain, so it looks like live webcam video. When nothing moves, the picture is exactly your photo. The 360° model is still available under **3D model** and as a `.glb` file.
+5. **Notes:** on the Notes page you send zoope background facts, or things to bring up at the next meeting. During a call you can send a live note, and zoope says it at the next pause.
 6. **Meetings:** zoope only attends meetings you confirm. Confirmed meetings join automatically at their start time while the page is open.
+7. **Summaries:** when a meeting ends, zoope writes a summary on your device: an overview, key points, decisions, action items with owners and due dates, questions waiting on you, and what it said for you. Summaries are saved on the Summaries page, and you can copy them or download them as Markdown.
+
+### Joining real Zoom, Google Meet and Teams calls
+
+zoope uses no platform APIs. The `extension/` folder is a Chrome/Edge extension that drives each platform's own web app:
+
+1. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and choose `extension/`. Setup then shows "Installed".
+2. Add a meeting with its link (a `zoom.us/j/…`, `meet.google.com/…` or `teams.microsoft.com/l/meetup-join/…` link) and approve it.
+3. At the start time, or when you click **Join now**, the extension opens the link in a new tab. Zoom links go straight to the Zoom web client. It enters your name, turns on the camera and microphone, and clicks Join. If there's a lobby, it waits there.
+4. In that tab, the meeting's camera is your live portrait and its microphone is your voice. The avatar is rendered in the meeting tab, and your voice streams from the zoope tab over a local WebRTC link. No server is involved.
+5. zoope turns on the meeting's live captions and reads them, with each speaker's name, to decide when to reply. If your neural voice isn't ready, it replies in the meeting chat instead.
+6. When the meeting ends, or you click Leave, it leaves the call and writes the summary.
+
+If you host zoope somewhere other than localhost, `*.github.io`, `*.pages.dev`, `*.netlify.app` or `*.vercel.app`, add your site to `bridge.js`'s `matches` in `extension/manifest.json`. After changing `js/portrait.js`, run `extension/build.sh`.
 
 ### What zoope says, and what it won't
 
-zoope never pretends to be you. It introduces itself as your AI assistant. It shares facts only from your notes, quoting them as yours, and only when a note clearly matches the question. It never agrees, commits or gives an opinion on your behalf. When it doesn't know something, it says so and passes the question on to you.
+zoope speaks in the first person as you ("Hi, I'm Alex"). It will not lie about what it is: if someone sincerely asks whether it's a bot or an AI, it says it's your AI avatar speaking from your notes. It shares facts only from your notes, and only when a note clearly matches the question. It never agrees, commits or gives an opinion on your behalf. When it doesn't know something, it says so and passes the question on to you.
 
 ### When zoope speaks (`js/engine.js`)
 
@@ -53,6 +68,6 @@ Requests like "Alex, could you draft the email by Thursday?" become action items
 
 ### Limits
 
-- **Meetings:** zoope runs meetings in its own meeting room. It does not sign in to Zoom, Google Meet or Teams or join calls there; linking an account only saves which account you use.
+- **Meetings:** real calls need the extension, and the zoope tab must stay open during the meeting. Platforms change their web apps often. The extension finds buttons by their visible names, but it has only been tested against mock pages, not the live Zoom, Meet and Teams sites, so a platform update can break a step. If captions can't be turned on automatically, turn them on in the meeting yourself. Some hosts block guests or web-client joins. Tell participants an AI avatar is attending, or get their consent, where the law or your workplace requires it.
 - **Face:** the 3D head is built from four photos, so it's an approximation. The face itself comes from the 478-point mesh, but the skull is a fitted shape textured from the photos, not a dense scan. Hair volume, ears and the seams between photos are approximate, and the result depends on even lighting and staying the same distance from the camera.
 - **Voice:** making your voice needs the one-time model download, so the first time needs internet. A zero-shot clone sounds close to you rather than identical, and a quiet room helps. Clone only your own voice, or one you have permission to use.

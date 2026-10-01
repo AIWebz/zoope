@@ -280,18 +280,29 @@
     $('startCam').disabled = on;
   }
 
+  var avatarMode = 'live';
   function refreshAvatarBox() {
     if (stopPreview) stopPreview();
     stopPreview = null;
-    var mesh = state.face && state.face.kind === 'mesh', depth = mesh && !!state.face.depth;
-    $('avatarInfo').textContent = !state.face ? 'None yet' : depth ? 'Building 3D model…' : mesh ? 'Photo only (rescan for 3D)' : 'Illustrated';
+    var mesh = state.face && state.face.kind === 'mesh', depth = mesh && !!state.face.depth, live = mesh && !!state.face.portrait;
+    var mode = live && avatarMode === 'live' ? 'live' : '3d';
+    $('avatarMode').classList.toggle('hidden', !(live && depth));
+    $('avatarInfo').textContent = !state.face ? 'None yet' : mode === 'live' ? 'Building live portrait…' : depth ? 'Building 3D model…' : mesh ? 'Photo only (rescan for 3D)' : 'Illustrated';
     $('avatarMeasured').textContent = '–';
     $('downloadModel').disabled = true;
+    $('dragHint').classList.add('hidden');
     if (state.face) {
       stopPreview = ZoopeAvatar.animate($('avatarCanvas'), state.face, function () { return previewLevel; }, {
+        mode: mode,
         interactive: true,
         frame: 'head',
         onReady: function (info) {
+          if (info.kind === 'portrait') {
+            $('avatarInfo').textContent = 'Live portrait · ' + info.width + '×' + info.height;
+            $('avatarMeasured').textContent = info.vertices + ' points';
+            $('downloadModel').disabled = !depth;
+            return;
+          }
           $('avatarInfo').textContent = '3D from ' + info.views.length + ' of 4 views';
           var m = info.measured, parts = [];
           if (m.crownY != null) parts.push('crown');
@@ -306,10 +317,12 @@
     } else {
       ZoopeAvatar.draw($('avatarCanvas'), null);
     }
-    if (!depth) $('dragHint').classList.add('hidden');
     $('testVoice').disabled = !state.face;
     renderScanSteps();
   }
+  document.querySelectorAll('input[name=avatarMode]').forEach(function (r) {
+    r.addEventListener('change', function () { if (r.checked) { avatarMode = r.value; refreshAvatarBox(); } });
+  });
 
   /* ------------------------------ head scan steps ------------------------------ */
   var SCAN_STEPS = [
@@ -823,7 +836,9 @@
     opts = opts || {};
     if (room) leaveRoom(false);
     m.joined = true; save();
-    var people = m.people.length ? m.people : ['Sam', 'Priya', 'Jordan'];
+    // a real meeting: the extension opens it in the platform's web app
+    var live = !m.demo && !!m.link && ZoopeBridge.available() && !!ZoopeBridge.platformOf(m.link);
+    var people = live ? [] : m.people.length ? m.people : ['Sam', 'Priya', 'Jordan'];
     var profile = JSON.parse(JSON.stringify(state.profile));
     if (!profile.names.length) { profile.names = ['you']; profile.preferred = 'You'; }
     if (opts.sampleKnowledge && !(profile.notes || []).length) profile.knowledge = SAMPLE_KNOWLEDGE;
@@ -831,7 +846,9 @@
     room = {
       meeting: m,
       people: people,
-      engine: new ZoopeEngine(profile, { attendees: people }),
+      engine: new ZoopeEngine(profile, { attendees: live ? m.people : people }),
+      live: live,
+      session: null,
       level: 0,
       queue: Promise.resolve(),
       listener: null,
@@ -870,14 +887,97 @@
     $('transcript').innerHTML = '';
     $('decisionLog').innerHTML = '';
     room.stopAnim = ZoopeAvatar.animate($('roomAvatar'), state.face, function () { return room ? room.level : 0; }, { frame: 'bust' });
+    $('roomState').classList.toggle('hidden', !live);
+    $('focusMeeting').classList.toggle('hidden', !live);
+    $('sayForm').classList.toggle('hidden', live);
+    $('listenBtn').classList.toggle('hidden', live);
 
-    sys('Joined as ' + (profile.preferred || 'you') + '. Type what people say below, or use Listen.');
     var problems = readinessProblems();
-    if (problems.length) sys('Not ready yet: ' + problems.join('; ') + '.');
-    aiSay(room.engine.greetOnJoin());
+    if (live) {
+      startLive(room, profile);
+      if (problems.length) sys('Not ready yet: ' + problems.join('; ') + '.');
+    } else {
+      sys((m.demo ? 'Joined as ' : 'Practice room: joined as ') + (profile.preferred || 'you') + '. Type what people say below, or use Listen.');
+      if (!m.demo) {
+        sys(!m.link ? 'This meeting has no link, so zoope can\'t join it for real. Add the link to join the actual call.'
+          : !ZoopeBridge.platformOf(m.link) ? 'This link isn\'t a Zoom, Google Meet or Teams meeting link, so this is a practice room.'
+          : 'To join the real call, install the zoope extension (see Setup). Until then, this is a practice room.');
+      }
+      if (problems.length) sys('Not ready yet: ' + problems.join('; ') + '.');
+      aiSay(room.engine.greetOnJoin());
+    }
     if (currentRoute !== room.page) navigate(room.page);
     else setTimeout(function () { $('room').scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 50);
   }
+
+  /* ---- real meetings (through the extension) ---- */
+  var STATE_TEXT = {
+    opening: 'Opening', prejoin: 'Pre-join', joining: 'Joining', lobby: 'In the lobby', joined: 'In the call', left: 'Left'
+  };
+  function setRoomState(st) {
+    var el = $('roomState');
+    el.textContent = STATE_TEXT[st] || st;
+    el.className = 'pill pill-dot ' + (st === 'joined' ? 'pill-green' : st === 'left' ? '' : 'pill-amber');
+  }
+  function addTile(r, name) {
+    if (r.people.indexOf(name) >= 0) return;
+    r.people.push(name);
+    var t = document.createElement('div');
+    t.className = 'tile other';
+    t.dataset.name = name;
+    t.innerHTML = '<div class="initials" style="background:' + COLORS[(r.people.length - 1) % COLORS.length] + '">' + esc(name.charAt(0).toUpperCase()) + '</div><div class="tile-name">' + esc(name) + '</div>';
+    $('stage').appendChild(t);
+  }
+  function startLive(r, profile) {
+    var name = profile.fullName || profile.preferred || profile.names[0];
+    setRoomState('opening');
+    sys('Opening the ' + PLATFORMS[r.meeting.platform].name + ' meeting in a new tab. zoope joins as ' + name + '.');
+    if (!(state.neuralReady && (state.voiceMode || 'neural') === 'neural')) {
+      sys('Your neural voice isn\'t ready, so zoope will answer in the meeting chat instead of speaking.');
+    }
+    ZoopeBridge.join({ url: r.meeting.link, name: name, title: r.meeting.title, portrait: state.face && state.face.portrait })
+      .then(function (sess) {
+        if (room !== r) { sess.leave(); sess.end(); return; }
+        r.session = sess;
+        r.onLeave = function () { sess.leave(); setTimeout(function () { sess.end(); }, 5000); };
+        sess.on('status', function (ev) {
+          if (room !== r) return;
+          setRoomState(ev.state);
+          if (ev.state === 'prejoin') sys('On the pre-join screen. Entering your name and turning on your avatar and voice.');
+          else if (ev.state === 'joining') sys('Asked to join.');
+          else if (ev.state === 'lobby') sys('Waiting for the host to let zoope in.');
+          else if (ev.state === 'joined') {
+            sys('In the call. zoope is following the live captions.');
+            if (!r.greeted) { r.greeted = true; aiSay(r.engine.greetOnJoin()); }
+          } else if (ev.state === 'left') {
+            sys(ev.detail || 'The meeting is over.');
+            leaveRoom(true);
+          }
+        });
+        sess.on('caption', function (ev) {
+          if (room !== r || ev.self) return; // our own words, captioned back
+          addTile(r, ev.speaker);
+          hear(ev.speaker, ev.text);
+        });
+        sess.on('chatSent', function (ev) { if (room === r && !ev.ok) sys('Couldn\'t post in the meeting chat.'); });
+        sess.on('log', function (ev) {
+          if (/^(captions|chat box)/.test(ev.text) && room === r) sys(ev.text.replace(/^captions: /, ''));
+          if (window.console) console.info('[zoope extension]', ev.text);
+        });
+      })
+      .catch(function (err) {
+        if (room !== r) return;
+        setRoomState('left');
+        sys('Couldn\'t open the meeting: ' + err.message);
+      });
+  }
+  ZoopeBridge.onAvailable(function (v) {
+    $('extStatus').textContent = 'Installed · v' + v;
+    $('extStatus').className = 'pill pill-green pill-dot';
+    $('extHint').textContent = 'Meetings with a Zoom, Meet or Teams link join the real call.';
+    document.querySelector('.ext-steps').classList.add('hidden');
+  });
+  $('focusMeeting').addEventListener('click', function () { if (room && room.session) room.session.focus(); });
 
   function sys(text) { line('sys', null, text); }
   function line(cls, who, text) {
@@ -900,6 +1000,18 @@
       if (room !== r) return;
       return new Promise(function (res) { setTimeout(res, 600); }).then(function () { // natural pause before speaking
         if (room !== r) return;
+        if (r.live) {
+          if (!r.session) return;
+          var neuralOk = state.neuralReady && (state.voiceMode || 'neural') === 'neural' && neuralState === 'ready';
+          if (!neuralOk) {
+            line('ai', r.engine.preferred + ' · zoope (chat)', text);
+            return r.session.chat(text);
+          }
+          line('ai', r.engine.preferred + ' · zoope', text);
+          highlight(null, true);
+          return neural().then(function (m) { return m.speak(text, function (l) { r.level = l; }, r.session.voiceOut()); })
+            .catch(function () { line('sys', null, 'The voice failed, so this went to the chat.'); return r.session.chat(text); });
+        }
         line('ai', r.engine.preferred + ' · zoope', text);
         highlight(null, true);
         return speakAs(text, function (l) { r.level = l; });
