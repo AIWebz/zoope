@@ -33,20 +33,30 @@ async function load(id) {
   await libReady;
   const webgpu = !!(self.navigator && navigator.gpu && await navigator.gpu.requestAdapter().catch(() => null));
   const progress = (p) => { if (p && p.status === 'progress' && p.total) self.postMessage({ id, kind: 'progress', loaded: p.loaded, total: p.total, file: p.file }); };
-  const device = webgpu ? 'webgpu' : 'wasm';
-  const opts = { dtype: webgpu ? 'q4f16' : 'q4', device, progress_callback: progress };
+  // try the best option first and fall back: GPU with half precision (needs shader-f16), GPU in
+  // full precision, then CPU (multi-threaded when the page is cross-origin isolated), then one thread
+  const SMALL = 'onnx-community/Qwen2.5-0.5B-Instruct', BIG = 'onnx-community/Qwen2.5-1.5B-Instruct';
+  const plans = [];
+  if (webgpu) plans.push({ model: BIG, device: 'webgpu', dtype: 'q4f16' }, { model: SMALL, device: 'webgpu', dtype: 'q4f16' }, { model: SMALL, device: 'webgpu', dtype: 'q4' });
+  plans.push({ model: SMALL, device: 'wasm', dtype: 'q4' }, { model: SMALL, device: 'wasm', dtype: 'q4', oneThread: true });
   let lastErr = null;
-  for (const model of MODELS[device]) {
+  for (const plan of plans) {
+    if (plan.oneThread) env.backends.onnx.wasm.numThreads = 1;
     for (const host of ['https://huggingface.co/', 'https://hf-mirror.com/']) {
       try {
         env.remoteHost = host;
-        gen = await pipeline('text-generation', model, opts);
-        self.postMessage({ id, kind: 'ready', device, model });
+        gen = await pipeline('text-generation', plan.model, { dtype: plan.dtype, device: plan.device, progress_callback: progress });
+        self.postMessage({ id, kind: 'ready', device: plan.device, model: plan.model });
         return;
-      } catch (err) { lastErr = err; }
+      } catch (err) {
+        lastErr = err;
+        // a network failure won't be fixed by another plan from the same host
+        if (/fetch|network/i.test(String(err && err.message))) continue;
+        break;
+      }
     }
   }
-  throw new Error('model download: ' + (lastErr && lastErr.message));
+  throw new Error('model: ' + (lastErr && lastErr.message));
 }
 
 // Generates a reply token by token, streaming it to the page so speech can start at the first sentence.

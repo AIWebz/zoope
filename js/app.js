@@ -882,7 +882,7 @@
     room = {
       meeting: m,
       people: people,
-      engine: new ZoopeEngine(profile, { attendees: live ? m.people : people }),
+      engine: new ZoopeEngine(profile, { attendees: live ? m.people : people, live: live }),
       live: live,
       session: null,
       level: 0,
@@ -1143,7 +1143,7 @@
       name: r.engine.preferred, fullName: state.profile.fullName, speaker: speaker, text: text, notes: notes,
       history: r.engine.history.slice(0, -2),
       // CPU-only models need longer to start; on a GPU replies start within about a second
-      firstTimeout: ZoopeBrain.status().device === 'webgpu' ? 3000 : 7000
+      firstTimeout: ZoopeBrain.status().device === 'webgpu' ? 3000 : window.crossOriginIsolated ? 5000 : 7000
     }, function (sentence) {
       if (room !== r) return;
       if (first) { first = false; aiSay(sentence); } else rest.push(sentence);

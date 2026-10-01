@@ -102,7 +102,7 @@
     lines.forEach((r, el) => {
       const gone = !el.isConnected;
       const ended = /[.?!]$/.test(r.text);
-      if (gone || now - r.changed > (ended ? 450 : 800)) flush(r);
+      if (gone || now - r.changed > (ended ? 350 : 700)) flush(r);
       if (gone) lines.delete(el);
     });
   }
@@ -120,7 +120,11 @@
     r.said = r.text;
     fresh = U.norm(fresh);
     if (fresh.replace(/[^a-z0-9]/gi, '').length < 2) return;
-    const self = /^you$/i.test(r.speaker) || selfNames.indexOf(String(r.speaker).toLowerCase()) >= 0;
+    // Meet and Teams label this tab's own captions "You". A caption under the user's name is someone
+    // else (often the user joining from another device) unless zoope is speaking right now (an echo).
+    const now2 = Date.now();
+    const speaking = envelopes.some((e) => now2 > e.at - 300 && now2 < e.at + (e.shapes || e.levels).length * e.step + 2500);
+    const self = /^you\b/i.test(r.speaker) || (speaking && selfNames.indexOf(String(r.speaker).toLowerCase()) >= 0);
     send({ type: 'caption', speaker: r.speaker || 'Someone', text: fresh, self });
   }
 

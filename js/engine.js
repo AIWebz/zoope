@@ -135,6 +135,7 @@
     this.sharedNotes = [];
     this.attendees = (opts.attendees || []).map(function (a) { return a.trim(); }).filter(Boolean);
     this.speakers = [];
+    this.live = !!opts.live;
     this.summoned = null;
     this.threshold = opts.threshold || 0.5;
     this.history = [];
@@ -250,7 +251,8 @@
 
     // one-on-one: with only one other person, every finished line is for me
     if (speaker && this.speakers.indexOf(speaker) < 0) this.speakers.push(speaker);
-    var oneOnOne = this.attendees.length <= 1 && this.speakers.length === 1;
+    // in a real call, count who actually speaks (the meeting's invite list is often out of date)
+    var oneOnOne = this.speakers.length === 1 && (this.live || this.attendees.length <= 1);
     if (oneOnOne && !summon && !afterSummon && !other) { score += 0.8; reasons.push('One-on-one: I answer every turn (+0.8)'); }
 
     if (other && nameUse !== 'vocative') {
