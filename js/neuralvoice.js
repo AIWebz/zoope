@@ -164,6 +164,7 @@ export async function prewarm(phrases) {
 }
 // a little variation in delivery sounds human; too much wanders off the voice
 const TEMP = 0.5;
+let leadSeconds = 0.25;
 
 /*
  * Mouth timing like a real speaker: lips start moving ~50 ms before the sound,
@@ -224,16 +225,23 @@ export async function speak(text, onLevel, out) {
   const cached = phraseCache.get(text);
   if (cached) play([cached]);
   else {
-    // start after a short buffer (0.2 s); if the model falls behind, re-buffer briefly instead of stuttering
-    const LEAD = 0.2;
-    let pending = [], pendingDur = 0;
+    // start after a short buffer; the buffer adapts to how fast this computer makes speech,
+    // so playback is continuous instead of stuttering
+    const LEAD = leadSeconds;
+    let pending = [], pendingDur = 0, underruns = 0;
     for await (const frame of engine.speak(text, new Float32Array(1), { temperature: TEMP })) {
       pending.push(frame);
       pendingDur += frame.length / engine.sampleRate;
       const ahead = started ? cursor - ac.currentTime : 0;
-      if ((started && ahead > 0.06) || pendingDur >= LEAD) { play(pending); pending = []; pendingDur = 0; }
+      let go;
+      if (!started) go = pendingDur >= LEAD;              // first: fill the buffer
+      else if (ahead > 0.02) go = true;                   // playing: keep the stream continuous
+      else { if (!pending.rebuffering) { underruns++; pending.rebuffering = true; } go = pendingDur >= LEAD; } // fell behind: refill once
+      if (go) { play(pending); pending = []; pendingDur = 0; }
     }
     if (pending.length) play(pending);
+    // learn: more buffer after a stutter, less when it was smooth
+    leadSeconds = underruns ? Math.min(1.5, leadSeconds * 1.6) : Math.max(0.15, leadSeconds * 0.9);
   }
   await new Promise((resolve) => setTimeout(resolve, Math.max(0, (lastEnd - ac.currentTime) * 1000) + 40));
   mouth.stop();

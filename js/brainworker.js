@@ -50,19 +50,26 @@ async function load(id) {
 }
 
 // Generates a reply token by token, streaming it to the page so speech can start at the first sentence.
-let stopFlag = false;
-async function ask(id, messages, maxTokens) {
+// one generation at a time (the model can't run two at once); later requests wait their turn
+let queue = Promise.resolve(), stopped = new Set();
+function ask(id, messages, maxTokens) {
+  const run = queue.then(() => askNow(id, messages, maxTokens));
+  queue = run.catch(() => {});
+  return run;
+}
+async function askNow(id, messages, maxTokens) {
   if (!gen) throw new Error('the model is not loaded');
-  stopFlag = false;
+  if (stopped.has(id)) { stopped.delete(id); self.postMessage({ id, kind: 'done' }); return; }
   const streamer = new TextStreamer(gen.tokenizer, {
     skip_prompt: true, skip_special_tokens: true,
-    callback_function: (text) => { if (stopFlag) throw new Error('__stop'); self.postMessage({ id, kind: 'token', text }); }
+    callback_function: (text) => { if (stopped.has(id)) throw new Error('__stop'); self.postMessage({ id, kind: 'token', text }); }
   });
   try {
-    await gen(messages, { max_new_tokens: maxTokens || 80, do_sample: true, temperature: 0.7, top_p: 0.9, repetition_penalty: 1.1, streamer });
+    await gen(messages, { max_new_tokens: maxTokens || 60, do_sample: true, temperature: 0.7, top_p: 0.9, repetition_penalty: 1.1, streamer });
   } catch (err) {
     if (!/__stop/.test(String(err && err.message))) throw err;
   }
+  stopped.delete(id);
   self.postMessage({ id, kind: 'done' });
 }
 
@@ -71,7 +78,7 @@ self.onmessage = async (e) => {
   try {
     if (m.kind === 'load') await load(m.id);
     else if (m.kind === 'ask') await ask(m.id, m.messages, m.maxTokens);
-    else if (m.kind === 'stop') stopFlag = true;
+    else if (m.kind === 'stop') stopped.add(m.id);
   } catch (err) {
     self.postMessage({ id: m.id, kind: 'error', message: err && err.message ? err.message : String(err) });
   }

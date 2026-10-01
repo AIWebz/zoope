@@ -14,7 +14,7 @@
  */
 (function (global) {
   'use strict';
-  var worker = null, seq = 0, handlers = {}, state = 'off', device = '', model = '', progress = 0, listeners = [];
+  var lastError = '', worker = null, seq = 0, handlers = {}, state = 'off', device = '', model = '', progress = 0, listeners = [];
 
   function emit() { listeners.forEach(function (fn) { fn({ state: state, device: device, model: model, progress: progress }); }); }
 
@@ -33,8 +33,11 @@
       var m = e.data;
       if (m.id === 0) {
         if (m.kind === 'progress') { progress = m.total ? m.loaded / m.total : 0; emit(); }
-        else if (m.kind === 'ready') { state = 'ready'; device = m.device; model = m.model || ''; emit(); }
-        else if (m.kind === 'error') { state = 'error'; emit(); retryLater(); }
+        else if (m.kind === 'ready') {
+          state = 'ready'; device = m.device; model = m.model || ''; emit();
+          worker.postMessage({ id: -1, kind: 'ask', messages: [{ role: 'user', content: 'Say hi.' }], maxTokens: 4 }); // warm-up
+        }
+        else if (m.kind === 'error') { state = 'error'; lastError = m.message; if (window.console) console.warn('[zoope AI]', m.message); emit(); retryLater(); }
         return;
       }
       if (handlers[m.id]) handlers[m.id](m);
@@ -63,17 +66,24 @@
    */
   function generate(opts, onSentence) {
     if (state !== 'ready') return Promise.resolve(null);
-    var name = opts.name, notes = opts.notes || [];
+    var name = opts.name;
+    // only the notes that relate to what was said (a shorter prompt starts replying much sooner)
+    var qw = (String(opts.text).toLowerCase().match(/[a-z0-9]{3,}/g) || []);
+    var notes = (opts.notes || []).map(function (n) {
+      var nw = String(n).toLowerCase(), hit = 0;
+      qw.forEach(function (w) { if (nw.indexOf(w) >= 0) hit++; });
+      return { n: n, hit: hit };
+    }).sort(function (a, b) { return b.hit - a.hit; }).slice(0, 4).map(function (x) { return x.n; });
     var now = new Date();
-    var sys = 'You are ' + (opts.fullName || name) + ' (people call you ' + name + '), in a live video meeting. ' +
-      'Talk exactly like a real person on a call: first person, natural, warm, conversational, and brief (usually one or two short sentences). ' +
-      'You are smart: answer general questions, do math, explain things and make small talk using your own knowledge. ' +
+    var sys = 'You are ' + (opts.fullName || name) + ' (called ' + name + ') on a live video call. ' +
+      'Speak like a real person: first person, natural, brief (one or two short sentences). ' +
+      'Answer general questions, math and small talk from your own knowledge. ' +
       'It is ' + now.toLocaleString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '.\n' +
       'Your notes (the only source for facts about your own work, projects, plans, schedule, numbers and decisions):\n' +
       (notes.length ? notes.map(function (n) { return '- ' + n; }).join('\n') : '- (none)') + '\n' +
-      'If you are asked about your own work, plans or schedule and your notes do not cover it, do not guess: say naturally that you will check and get back to them, and start your reply with [ASK]. ' +
-      'Never make promises or decisions on your own. If someone sincerely asks whether you are an AI or a bot, say honestly that you are ' + name + '\'s AI avatar speaking from their notes.';
-    var convo = (opts.history || []).slice(-10).map(function (h) { return (h.ai ? 'You' : h.speaker) + ': ' + h.text; }).join('\n');
+      'If asked about your own work or plans and the notes do not cover it, start with [ASK] and say you will check and get back to them. ' +
+      'Make no promises. If sincerely asked whether you are an AI, say you are ' + name + '\'s AI avatar.';
+    var convo = (opts.history || []).slice(-6).map(function (h) { return (h.ai ? 'You' : h.speaker) + ': ' + h.text; }).join('\n');
     var user = (convo ? 'Conversation so far:\n' + convo + '\n\n' : '') + opts.speaker + ': ' + opts.text + '\n\nReply as ' + name + ', speaking out loud.';
     var known = ' ' + notes.concat((opts.history || []).map(function (h) { return h.speaker + ' ' + h.text; }), [name, opts.fullName || '', opts.speaker, opts.text]).join(' ').toLowerCase() + ' ';
 
@@ -93,7 +103,7 @@
         said.push(t);
         clearTimeout(firstTimer);
         onSentence(t);
-        if (said.length >= 3) { stop(); return false; } // keep turns short, like people do
+        if (said.length >= 2) { stop(); return false; } // keep turns short, like people do (and free the CPU for the voice)
         return true;
       };
       handlers[id] = function (m) {
@@ -106,6 +116,7 @@
             if (!take(match[1])) { finish({ said: said, ask: ask }); return; }
           }
         } else if (m.kind === 'done' || m.kind === 'error') {
+          if (m.kind === 'error') { lastError = m.message; if (window.console) console.warn('[zoope AI]', m.message); }
           if (m.kind === 'done' && buf.trim()) take(buf);
           finish(said.length || ask ? { said: said, ask: ask } : null);
         }
@@ -119,7 +130,8 @@
   global.ZoopeBrain = {
     load: load, generate: generate,
     ready: function () { return state === 'ready'; },
-    status: function () { return { state: state, device: device, model: model, progress: progress }; },
+    status: function () { return { state: state, device: device, model: model, progress: progress, error: lastError }; },
+    lastError: function () { return lastError; },
     onStatus: function (fn) { listeners.push(fn); fn({ state: state, device: device, model: model, progress: progress }); }
   };
 })(window);
