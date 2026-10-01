@@ -23,6 +23,14 @@
       if (timeout) setTimeout(function () { if (pending[id]) { delete pending[id]; reject(new Error('timeout')); } }, timeout);
     });
   }
+  var retries = 0;
+  function retryLater() {
+    if (retries >= 5) return;
+    retries++;
+    var again = function () { window.removeEventListener('online', again); clearTimeout(t); if (state === 'error') { try { worker.terminate(); } catch (e) { /* gone */ } worker = null; load(); } };
+    var t = setTimeout(again, 60000 * retries);
+    window.addEventListener('online', again);
+  }
   function load() {
     if (worker) return;
     try { worker = new Worker(new URL('js/brainworker.js', document.baseURI), { type: 'module' }); } catch (e) { state = 'error'; emit(); return; }
@@ -31,7 +39,7 @@
       if (m.kind === 'progress') { progress = m.total ? m.loaded / m.total : 0; emit(); return; }
       var p = pending[m.id];
       if (m.kind === 'ready') { state = 'ready'; device = m.device; emit(); }
-      if (m.kind === 'error' && m.id === 0) { state = 'error'; emit(); }
+      if (m.kind === 'error' && m.id === 0) { state = 'error'; emit(); retryLater(); }
       if (!p) return;
       delete pending[m.id];
       if (m.kind === 'error') p.reject(new Error(m.message)); else p.resolve(m);

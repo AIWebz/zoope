@@ -1026,12 +1026,17 @@
     document.querySelector('.ext-steps').classList.add('hidden');
   });
   ZoopeBrain.onStatus(function (st) {
-    var el = $('brainState');
-    el.textContent = st.state === 'ready' ? 'AI: ready' + (st.device === 'webgpu' ? ' (GPU)' : '')
+    var text = st.state === 'ready' ? 'AI: ready' + (st.device === 'webgpu' ? ' (GPU)' : '')
       : st.state === 'loading' ? 'AI: loading ' + Math.round(st.progress * 100) + '%'
-      : st.state === 'error' ? 'AI: rules only' : 'AI: off';
-    el.className = 'pill ' + (st.state === 'ready' ? 'pill-green pill-dot' : st.state === 'loading' ? 'pill-amber' : '');
+      : st.state === 'error' ? 'AI: rules only (retrying)' : 'AI: starting';
+    ['brainState', 'brainStateNav'].forEach(function (id) {
+      var el = $(id);
+      el.textContent = text;
+      el.className = 'pill ' + (st.state === 'ready' ? 'pill-green pill-dot' : st.state === 'loading' ? 'pill-amber' : '');
+    });
   });
+  // the AI engine is always on: on a computer it starts as soon as zoope opens
+  if (!IS_PHONE) setTimeout(function () { ZoopeBrain.load(); }, 1500);
   $('focusMeeting').addEventListener('click', function () { if (room && room.session) room.session.focus(); });
 
   /*
