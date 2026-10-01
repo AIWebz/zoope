@@ -15,32 +15,65 @@
 (function (global) {
   'use strict';
   var lastError = '', worker = null, seq = 0, handlers = {}, state = 'off', device = '', model = '', progress = 0, listeners = [];
+  // where the engine runs: 'local' (a worker in this page) or 'ext' (installed in the zoope extension)
+  var mode = 'local', source = 'this page';
+  function send(msg) {
+    if (mode === 'ext') {
+      if (msg.kind === 'ask') global.ZoopeBridge.ai.ask(msg.id, msg.messages, msg.maxTokens);
+      else if (msg.kind === 'stop') global.ZoopeBridge.ai.stop(msg.id);
+    } else if (worker) worker.postMessage(msg);
+  }
+  function onEngine(m) { if (handlers[m.id]) handlers[m.id](m); }
 
-  function emit() { listeners.forEach(function (fn) { fn({ state: state, device: device, model: model, progress: progress, error: lastError }); }); }
+  /* Use the AI engine installed in the extension (it was connected with the popup's Connect button). */
+  function useExtension(st) {
+    if (worker) { try { worker.terminate(); } catch (e) { /* gone */ } worker = null; }
+    mode = 'ext'; source = 'the zoope extension';
+    state = st.state === 'ready' ? 'ready' : st.state === 'error' ? 'error' : 'loading';
+    device = st.device || ''; model = st.model || ''; progress = st.progress || 0; lastError = st.error || '';
+    emit();
+  }
+  function watchExtension() {
+    var B = global.ZoopeBridge;
+    if (!B || !B.ai) return;
+    B.ai.on(function (ev) {
+      if (ev.type === 'aiStatus' && ev.connected) useExtension(ev);
+      else if (ev.type === 'aiEngine' && mode === 'ext') onEngine(ev.msg);
+    });
+    B.onAvailable(function () {
+      B.ai.status().then(function (st) { if (st && st.connected) useExtension(st); });
+    });
+  }
+
+  function emit() { listeners.forEach(function (fn) { fn({ state: state, device: device, model: model, progress: progress, error: lastError, source: source }); }); }
 
   var retries = 0;
   function retryLater() {
     if (retries >= 5) return;
     retries++;
-    var again = function () { window.removeEventListener('online', again); clearTimeout(t); if (state === 'error') { try { worker.terminate(); } catch (e) { /* gone */ } worker = null; load(); } };
+    var again = function () { window.removeEventListener('online', again); clearTimeout(t); if (state === 'error' && mode === 'local') { try { worker.terminate(); } catch (e) { /* gone */ } worker = null; load(); } };
     var t = setTimeout(again, 60000 * retries);
     window.addEventListener('online', again);
   }
   function load() {
-    if (worker) return;
+    if (worker || mode === 'ext') return;
+    // if the extension has the AI engine installed, use that instead of loading another copy here
+    var B = global.ZoopeBridge;
+    if (B && B.available() && !load.checked) {
+      load.checked = true;
+      B.ai.status().then(function (st) { if (st && st.connected) useExtension(st); else load(); });
+      return;
+    }
     try { worker = new Worker(new URL('js/brainworker.js', document.baseURI), { type: 'module' }); } catch (e) { state = 'error'; emit(); return; }
     worker.onmessage = function (e) {
       var m = e.data;
       if (m.id === 0) {
         if (m.kind === 'progress') { progress = m.total ? m.loaded / m.total : 0; emit(); }
-        else if (m.kind === 'ready') {
-          state = 'ready'; device = m.device; model = m.model || ''; emit();
-          worker.postMessage({ id: -1, kind: 'ask', messages: [{ role: 'user', content: 'Say hi.' }], maxTokens: 4 }); // warm-up
-        }
+        else if (m.kind === 'ready') { state = 'ready'; device = m.device; model = m.model || ''; emit(); }
         else if (m.kind === 'error') { state = 'error'; lastError = m.message; if (window.console) console.warn('[zoope AI]', m.message); emit(); retryLater(); }
         return;
       }
-      if (handlers[m.id]) handlers[m.id](m);
+      onEngine(m);
     };
     state = 'loading'; emit();
     worker.postMessage({ id: 0, kind: 'load' });
@@ -99,7 +132,7 @@
         finished = true; clearTimeout(firstTimer); delete handlers[id];
         resolve(val);
       };
-      var stop = function () { worker.postMessage({ id: id, kind: 'stop' }); };
+      var stop = function () { send({ id: id, kind: 'stop' }); };
       var take = function (sentence) {
         var t = sentence.replace(/^\s*["“]|["”]\s*$/g, '').replace(/^(You|Me|[A-Z][a-z]+):\s*/, '').trim();
         if (/\[ASK\]/i.test(t)) { ask = true; t = t.replace(/\[ASK\]\s*/ig, ''); }
@@ -133,14 +166,16 @@
       // only if the model hasn't produced anything at all in time is the rule engine's reply used;
       // once it is writing, zoope waits for its sentence
       firstTimer = setTimeout(function () { if (!gotToken) { stop(); finish(null); } }, opts.firstTimeout || 8000);
-      worker.postMessage({ id: id, kind: 'ask', messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], maxTokens: 90 });
+      send({ id: id, kind: 'ask', messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], maxTokens: 90 });
     });
   }
+
+  watchExtension();
 
   global.ZoopeBrain = {
     load: load, generate: generate,
     ready: function () { return state === 'ready'; },
-    status: function () { return { state: state, device: device, model: model, progress: progress, error: lastError }; },
+    status: function () { return { state: state, device: device, model: model, progress: progress, error: lastError, source: source }; },
     lastError: function () { return lastError; },
     onStatus: function (fn) { listeners.push(fn); fn({ state: state, device: device, model: model, progress: progress }); }
   };

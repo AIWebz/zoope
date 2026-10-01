@@ -23,7 +23,83 @@ function toMeeting(s, msg) {
   return chrome.tabs.sendMessage(s.meetingTab, msg).catch(() => {});
 }
 
+/* ------------------------------------------------------------------------------
+ * The AI engine installed in the extension (Connect button in the popup).
+ * It runs in an offscreen page (ai.html); zoope tabs send requests here, and
+ * replies stream back to the tab that asked.
+ * ---------------------------------------------------------------------------- */
+const AI_KEY = 'aiStatus';
+async function aiStatus() {
+  const [{ aiConnected }, sess] = await Promise.all([chrome.storage.local.get('aiConnected'), chrome.storage.session.get([AI_KEY, 'aiTabs'])]);
+  return Object.assign({ state: 'off', progress: 0 }, sess[AI_KEY] || {}, { connected: !!aiConnected });
+}
+async function setAiStatus(patch) {
+  const st = Object.assign(await aiStatus(), patch);
+  delete st.connected;
+  await chrome.storage.session.set({ [AI_KEY]: st });
+  const full = await aiStatus();
+  // tell every zoope tab that has talked to the AI
+  const { aiTabs } = await chrome.storage.session.get('aiTabs');
+  for (const t of aiTabs || []) chrome.tabs.sendMessage(t, Object.assign({ type: 'aiStatus' }, full)).catch(() => {});
+  return full;
+}
+async function addAiTab(tab) {
+  if (tab == null) return;
+  const { aiTabs } = await chrome.storage.session.get('aiTabs');
+  const list = aiTabs || [];
+  if (list.indexOf(tab) < 0) { list.push(tab); await chrome.storage.session.set({ aiTabs: list }); }
+}
+let engineUp = null;
+async function ensureEngine() {
+  if (!engineUp) {
+    engineUp = (async () => {
+      const has = chrome.offscreen.hasDocument ? await chrome.offscreen.hasDocument() : false;
+      if (!has) {
+        const up = new Promise((resolve) => { pendingUp = resolve; setTimeout(resolve, 5000); });
+        await chrome.offscreen.createDocument({ url: 'ai.html', reasons: ['WORKERS'], justification: 'Runs zoope\'s AI engine on this computer.' });
+        await up;
+      }
+    })();
+    engineUp.catch(() => { engineUp = null; });
+  }
+  return engineUp;
+}
+let pendingUp = null;
+async function aiConnect() {
+  await chrome.storage.local.set({ aiConnected: true });
+  const st = await aiStatus();
+  const running = chrome.offscreen.hasDocument ? await chrome.offscreen.hasDocument() : false;
+  if (running && (st.state === 'ready' || st.state === 'loading')) return st;
+  await setAiStatus({ state: 'loading', progress: 0, error: '' });
+  try {
+    await ensureEngine();
+    chrome.runtime.sendMessage({ type: 'aiToEngine', msg: { id: 0, kind: 'load' } }).catch(() => {});
+  } catch (e) {
+    return setAiStatus({ state: 'error', error: e.message });
+  }
+  return aiStatus();
+}
+// request ids from different tabs can clash: they travel as "tab:id"
+const owner = (gid) => { const i = String(gid).indexOf(':'); return i < 0 ? null : { tab: +String(gid).slice(0, i), id: +String(gid).slice(i + 1) }; };
+
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+  if (!msg) return;
+  // ---- from the AI engine page
+  if (msg.type === 'aiEngineUp') { if (pendingUp) { pendingUp(); pendingUp = null; } return; }
+  if (msg.type === 'aiFromEngine') {
+    const m = msg.msg;
+    if (m.id === 0) {
+      if (m.kind === 'progress') setAiStatus({ state: 'loading', progress: m.total ? m.loaded / m.total : 0 });
+      else if (m.kind === 'ready') setAiStatus({ state: 'ready', progress: 1, device: m.device, model: m.model, error: '' });
+      else if (m.kind === 'error') setAiStatus({ state: 'error', error: m.message });
+      return;
+    }
+    const o = owner(m.id);
+    if (o) chrome.tabs.sendMessage(o.tab, { type: 'aiEngine', msg: Object.assign({}, m, { id: o.id }) }).catch(() => {});
+    return;
+  }
+  if (msg.type === 'aiToEngine') return; // meant for the engine page
+
   (async () => {
     const tab = sender.tab && sender.tab.id;
     switch (msg && msg.type) {
@@ -61,6 +137,27 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       }
       case 'ping':
         return { ok: true, version: chrome.runtime.getManifest().version };
+
+      // ---- the AI engine (popup and zoope tabs)
+      case 'aiStatus': {
+        await addAiTab(tab);
+        const st = await aiStatus();
+        // installed earlier: start it again (from the extension's storage, no download) when zoope asks
+        if (st.connected && (st.state === 'off' || !(await chrome.offscreen.hasDocument()))) return aiConnect();
+        return st;
+      }
+      case 'aiConnect':
+        await addAiTab(tab);
+        return aiConnect();
+      case 'aiAsk': {
+        await addAiTab(tab);
+        await ensureEngine();
+        chrome.runtime.sendMessage({ type: 'aiToEngine', msg: { id: tab + ':' + msg.id, kind: 'ask', messages: msg.messages, maxTokens: msg.maxTokens } }).catch(() => {});
+        return { ok: true };
+      }
+      case 'aiStop':
+        chrome.runtime.sendMessage({ type: 'aiToEngine', msg: { id: tab + ':' + msg.id, kind: 'stop' } }).catch(() => {});
+        return { ok: true };
 
       // ---- from the meeting tab
       case 'hello': {

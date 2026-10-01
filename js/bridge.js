@@ -13,7 +13,7 @@
 (function (global) {
   'use strict';
 
-  var version = null, seq = 0, pending = {}, sessions = {}, onAvailable = [];
+  var version = null, seq = 0, pending = {}, sessions = {}, onAvailable = [], aiListeners = [];
 
   window.addEventListener('message', function (e) {
     if (e.source !== window || !e.data || !e.data.zoopeExt) return;
@@ -25,6 +25,7 @@
       return;
     }
     if (m.id && pending[m.id]) { pending[m.id](m.reply || {}); delete pending[m.id]; return; }
+    if (m.event && /^ai/.test(m.event.type || '')) { aiListeners.forEach(function (fn) { fn(m.event); }); return; }
     if (m.event && m.event.sessionId && sessions[m.event.sessionId]) sessions[m.event.sessionId]._event(m.event);
   });
   window.postMessage({ zoopeApp: { type: 'hello' } }, location.origin);
@@ -146,6 +147,14 @@
     version: function () { return version; },
     onAvailable: function (fn) { if (version) fn(version); else onAvailable.push(fn); },
     platformOf: platformOf,
-    join: join
+    join: join,
+    // the AI engine installed in the extension (its popup's Connect button)
+    ai: {
+      status: function () { return call({ type: 'aiStatus' }, 8000); },
+      connect: function () { return call({ type: 'aiConnect' }, 15000); },
+      ask: function (id, messages, maxTokens) { return call({ type: 'aiAsk', id: id, messages: messages, maxTokens: maxTokens }, 15000); },
+      stop: function (id) { return call({ type: 'aiStop', id: id }); },
+      on: function (fn) { aiListeners.push(fn); }
+    }
   };
 })(window);

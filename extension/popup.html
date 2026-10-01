@@ -1,0 +1,22 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>zoope</title>
+<style>
+  body { width: 280px; margin: 0; padding: 16px; font: 14px/1.45 Arial, Helvetica, sans-serif; color: #18181b; background: #fff; }
+  h1 { margin: 0 0 4px; font: bold 20px Arial; color: #0b5cff; }
+  p { margin: 0 0 12px; color: #52525b; font-size: 13px; }
+  button { width: 100%; height: 38px; border: 0; border-radius: 8px; background: #0b5cff; color: #fff; font: bold 14px Arial; cursor: pointer; }
+  button:disabled { background: #a1a1aa; cursor: default; }
+  .bar { height: 6px; margin: 12px 0 6px; border-radius: 3px; background: #e4e4e7; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: #0b5cff; transition: width .3s; }
+  #status { font-size: 12.5px; color: #3f3f46; min-height: 18px; word-break: break-word; }
+  .ok { color: #15803d !important; }
+  .err { color: #b91c1c !important; }
+</style></head>
+<body>
+  <h1>zoope</h1>
+  <p>Install zoope's AI engine into this extension. It runs on this computer and writes zoope's replies in meetings.</p>
+  <button id="connect">Connect</button>
+  <div class="bar"><i id="bar"></i></div>
+  <div id="status">Not connected.</div>
+  <script src="popup.js"></script>
+</body></html>

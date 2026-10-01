@@ -58,6 +58,8 @@ The rule engine decides *when* to speak. The model then writes *what* to say, as
 
 Honesty rails: facts about your own work, plans, schedule and numbers may only come from your notes. When they don't cover what you were asked, the model says it will check and get back to them, and zoope pings you. A sentence that claims something personal with a number or name found nowhere in your notes or the conversation is dropped. If the model can't start a reply within 2.5 s in a call, the rule engine's reply is used instead.
 
+**Installing the AI engine into the extension:** click the zoope icon in Chrome's toolbar and press **Connect**. The extension downloads the model into its own storage (using its permission to reach Hugging Face, so the website's download limits don't apply) and runs it in a hidden extension page (`extension/ai.html`). Every zoope tab then sends its replies to that engine instead of loading its own. After a browser restart it starts again from the extension's storage, with no new download. The engine code (`js/aicore.js`) is shared by the website and the extension; `extension/build.sh` packages it with transformers.js into the extension zip.
+
 **Pings:** when zoope can't answer a question meant for you (by name, one-on-one, or right after it spoke), it pings you: a desktop notification, two beeps and a highlighted line saying who asked what. Type an answer in the note box and zoope says it at the next pause. Pings are spaced at least 90 seconds apart, and small talk or questions for others never ping. Everything unanswered is listed in the summary.
 
 ### When zoope speaks (`js/engine.js`)

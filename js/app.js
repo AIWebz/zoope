@@ -1033,7 +1033,7 @@
     document.querySelector('.ext-steps').classList.add('hidden');
   });
   // which version of zoope this is, so an outdated copy of the site is easy to spot
-  var BUILD = '2026-10-01 · AI v7';
+  var BUILD = '2026-10-01 · AI v8';
   $('buildTag').textContent = BUILD;
   ZoopeBrain.onStatus(function (st) {
     // a banner in the meeting room whenever the AI isn't ready, so it's clear why replies are simple
