@@ -1,7 +1,7 @@
 /*
  * zoope's language model, in a Web Worker so the page stays smooth.
  *
- * Runs an instruction-tuned model (Qwen2.5 1.5B Instruct on a GPU, 0.5B otherwise; 4-bit) with
+ * Runs an instruction-tuned model (Qwen2.5 0.5B Instruct, 4-bit) with
  * transformers.js on WebGPU when available, else WebAssembly. Weights come
  * from Hugging Face (or its mirror) once and are cached by the browser.
  */
@@ -51,9 +51,10 @@ async function load(id) {
   const progress = (p) => { if (p && p.status === 'progress' && p.total) self.postMessage({ id, kind: 'progress', loaded: p.loaded, total: p.total, file: p.file }); };
   // try the best option first and fall back: GPU with half precision (needs shader-f16), GPU in
   // full precision, then CPU (multi-threaded when the page is cross-origin isolated), then one thread
-  const SMALL = 'onnx-community/Qwen2.5-0.5B-Instruct', BIG = 'onnx-community/Qwen2.5-1.5B-Instruct';
+  const SMALL = 'onnx-community/Qwen2.5-0.5B-Instruct';
   const plans = [];
-  if (webgpu) plans.push({ model: BIG, device: 'webgpu', dtype: 'q4f16' }, { model: SMALL, device: 'webgpu', dtype: 'q4f16' }, { model: SMALL, device: 'webgpu', dtype: 'q4' });
+  // the smaller model everywhere: it downloads in a fraction of the time, so zoope is ready sooner
+  if (webgpu) plans.push({ model: SMALL, device: 'webgpu', dtype: 'q4f16' }, { model: SMALL, device: 'webgpu', dtype: 'q4' });
   plans.push({ model: SMALL, device: 'wasm', dtype: 'q4' }, { model: SMALL, device: 'wasm', dtype: 'q4', oneThread: true });
   let lastErr = null;
   for (const plan of plans) {

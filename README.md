@@ -52,7 +52,7 @@ zoope speaks in the first person as you ("Hi, I'm Alex"). It will not lie about 
 
 ### The AI engine (`js/brain.js`, `js/brainworker.js`)
 
-zoope's replies are generated, not picked from templates. A language model runs in your browser through transformers.js: Qwen2.5 1.5B Instruct on WebGPU when your computer has a GPU, otherwise Qwen2.5 0.5B on WebAssembly (both 4-bit). It is always on: it starts as soon as zoope opens on a computer, and the sidebar shows its status. Its weights download once from Hugging Face (or hf-mirror.com) and are cached; if that fails, zoope retries on its own and uses the rule engine's replies meanwhile. There are no API calls.
+zoope's replies are generated, not picked from templates. A language model runs in your browser through transformers.js: Qwen2.5 0.5B Instruct (4-bit), on WebGPU when your computer has a GPU, otherwise WebAssembly. It is always on: it starts as soon as zoope opens on a computer, and the sidebar shows its status. Its weights download once from Hugging Face (or hf-mirror.com) and are cached; if that fails, zoope retries on its own and uses the rule engine's replies meanwhile. There are no API calls.
 
 The rule engine decides *when* to speak. The model then writes *what* to say, as you, in the moment, from the conversation, your notes and its general knowledge: answers, small talk, reactions, math and explanations. Replies stream: each sentence is spoken as soon as it is generated, so zoope starts talking almost at once, and turns are kept to three sentences at most. The only fixed reply is "Yes?" when someone just says your name.
 

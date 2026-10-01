@@ -16,7 +16,7 @@
   'use strict';
   var lastError = '', worker = null, seq = 0, handlers = {}, state = 'off', device = '', model = '', progress = 0, listeners = [];
 
-  function emit() { listeners.forEach(function (fn) { fn({ state: state, device: device, model: model, progress: progress }); }); }
+  function emit() { listeners.forEach(function (fn) { fn({ state: state, device: device, model: model, progress: progress, error: lastError }); }); }
 
   var retries = 0;
   function retryLater() {

@@ -1032,7 +1032,17 @@
     $('extHint').textContent = 'Meetings with a Zoom, Meet or Teams link join the real call.';
     document.querySelector('.ext-steps').classList.add('hidden');
   });
+  // which version of zoope this is, so an outdated copy of the site is easy to spot
+  var BUILD = '2026-10-01 · AI v7';
+  $('buildTag').textContent = BUILD;
   ZoopeBrain.onStatus(function (st) {
+    // a banner in the meeting room whenever the AI isn't ready, so it's clear why replies are simple
+    var ban = $('aiBanner');
+    ban.classList.toggle('hidden', st.state === 'ready');
+    ban.classList.toggle('err', st.state === 'error');
+    ban.textContent = st.state === 'loading' ? 'AI engine loading: ' + Math.round(st.progress * 100) + '%. zoope gives simple replies until it is ready (first time only; it is saved after).'
+      : st.state === 'error' ? 'AI engine not running: ' + (st.error || 'unknown error') + '. zoope gives simple replies. Retrying automatically.'
+      : 'AI engine starting…';
     var text = st.state === 'ready' ? 'AI: ready' + (st.device === 'webgpu' ? ' (GPU)' : '')
       : st.state === 'loading' ? 'AI: loading ' + Math.round(st.progress * 100) + '%'
       : st.state === 'error' ? 'AI: rules only (retrying)' : 'AI: starting';

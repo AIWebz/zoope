@@ -234,7 +234,7 @@
       </div>
 
       <div class="sidebar-foot">
-        <span class="status-dot"></span> Running locally
+        <span class="status-dot"></span> Running locally <span class="build" id="buildTag"></span>
         <span class="pill" id="brainStateNav" title="zoope's AI engine, running in this browser">AI: starting</span>
       </div>
     </aside>
@@ -550,6 +550,7 @@
         <!-- Meeting room (moved into the Demo or Meetings page when joined) -->
         <div class="hidden" id="roomHolder">
           <section id="room" class="panel room hidden">
+            <div class="ai-banner hidden" id="aiBanner" role="status"></div>
             <div class="panel-head room-head">
               <span class="live-dot"></span>
               <span class="panel-title" id="roomTitle">Meeting</span>
