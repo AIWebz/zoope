@@ -179,6 +179,8 @@ function buildSpec(face, img) {
   const hair = head.hairRgb ? rgb(head.hairRgb)
     : sample(top[0] - faceW * 0.2, top[1] - faceH * 0.2, top[0] + faceW * 0.2, top[1] - faceH * 0.06, 0.3);
   const shY = Math.min(SIZE * 0.93, chin[1] + faceH * 0.42);
+  const innerY = Math.min(SIZE - 6, chin[1] + faceH * 0.3);
+  const inner = sample(cx - faceW * 0.1, innerY - 5, cx + faceW * 0.1, innerY + 5);
   const shirt = sample(cx - faceW * 0.95, shY - 8, cx - faceW * 0.55, shY + 8)
     .lerp(sample(cx + faceW * 0.55, shY - 8, cx + faceW * 0.95, shY + 8), 0.5);
   const ovalColors = FACE_OVAL.map((i) => {
@@ -210,7 +212,7 @@ function buildSpec(face, img) {
     chinY,
     measured: { crownY, width, depth },
     views: Object.keys(views).filter((k) => views[k] && views[k].photo),
-    colors: { skin, hair, shirt, oval: ovalColors }
+    colors: { skin, hair, shirt, inner, oval: ovalColors }, hairShare: head.hairShare == null ? 0.3 : head.hairShare
   };
   specCache.set(face, spec);
   return spec;
@@ -240,7 +242,7 @@ function buildShell(spec) {
 
   const back = new THREE.Vector3(0, 0.3, -1).normalize();
   const count = ring0.length;
-  const positions = [], colors = [], index = [];
+  const positions = [], colors = [], index = [], hairW = [];
   const hair = spec.colors.hair, skinDark = spec.colors.skin.clone().multiplyScalar(0.82);
 
   for (let k = 0; k <= SHELL_RINGS; k++) {
@@ -265,6 +267,8 @@ function buildShell(spec) {
       const speed = dir.y > 0.35 ? 9 : 2.4;
       const c = spec.colors.oval[i].clone().lerp(target, Math.min(1, t * speed));
       colors.push(c.r, c.g, c.b);
+      // how much hair grows here: none on the face outline and below the ears
+      hairW.push(dir.y > -0.25 ? Math.min(1, t * speed * 0.8) * Math.min(1, (dir.y + 0.25) * 3) : 0);
     }
   }
   for (let k = 0; k < SHELL_RINGS; k++) {
@@ -273,7 +277,7 @@ function buildShell(spec) {
       index.push(a, c, b, b, c, d);
     }
   }
-  return { positions: new Float32Array(positions), colors: new Float32Array(colors), index, center: C, radii: R, ringSize: count };
+  return { positions: new Float32Array(positions), colors: new Float32Array(colors), hairW: new Float32Array(hairW), index, center: C, radii: R, ringSize: count };
 }
 
 // Maps a head-space point into a captured photo (crop pixels), for each view.
@@ -314,7 +318,11 @@ function viewWeights(n, available, sharp) {
 // by per-vertex weights, falling back to a per-vertex colour where no photo saw
 // the surface.
 function blendMaterial(texture) {
-  const mat = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0, side: THREE.DoubleSide });
+  const mat = new THREE.MeshPhysicalMaterial({
+    roughness: 0.62, metalness: 0, side: THREE.DoubleSide,
+    sheen: 0.18, sheenRoughness: 0.6, sheenColor: new THREE.Color(0.75, 0.45, 0.4),
+    clearcoat: 0.06, clearcoatRoughness: 0.5
+  });
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.atlas = { value: texture };
     shader.vertexShader = shader.vertexShader
@@ -368,6 +376,131 @@ function addViewAttributes(geo, pts, normals, proj, available, opts) {
   geo.setAttribute('vw', new THREE.BufferAttribute(vw, 4));
 }
 
+/*
+ * Hair as real 3D layers: stacked shells over the scalp, each a little further
+ * out, cut into strands by a strand texture. Inner layers are darker (light
+ * reaches them less), outer layers thinner and lighter, so the hair has volume
+ * and a ragged, strand-by-strand edge in silhouette.
+ */
+const HAIR_LAYERS = 16;
+let strandTex = null;
+function strands() {
+  if (strandTex) return strandTex;
+  const W = 256, H = 64, data = new Uint8Array(W * H * 4);
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const len = [];
+  for (let x = 0; x < W; x++) len.push(rnd());
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      // each column is a strand clump; its height says how far out it reaches, varying slowly along its length
+      const v = Math.max(0, Math.min(1, len[x] * 0.8 + 0.2 * Math.sin(y / H * Math.PI * 2 + x * 1.7)));
+      const i = (y * W + x) * 4;
+      data[i] = data[i + 1] = data[i + 2] = Math.round(v * 255); data[i + 3] = 255;
+    }
+  }
+  strandTex = new THREE.DataTexture(data, W, H);
+  strandTex.wrapS = strandTex.wrapT = THREE.RepeatWrapping;
+  strandTex.magFilter = THREE.NearestFilter;
+  strandTex.needsUpdate = true;
+  return strandTex;
+}
+function buildHairLayers(shell, hairColor) {
+  const P = shell.positions, W = shell.hairW, count = shell.ringSize, rings = SHELL_RINGS;
+  const keep = [];
+  for (let t = 0; t < shell.index.length; t += 3) {
+    const a = shell.index[t], b = shell.index[t + 1], c = shell.index[t + 2];
+    if (W[a] > 0.15 && W[b] > 0.15 && W[c] > 0.15) keep.push(a, b, c);
+  }
+  const group = new THREE.Group();
+  group.name = 'hair';
+  if (!keep.length) return group;
+  const uv = new Float32Array((P.length / 3) * 2);
+  for (let k = 0; k <= rings; k++) for (let i = 0; i < count; i++) { const v = k * count + i; uv[v * 2] = i / count * 9; uv[v * 2 + 1] = k / rings; }
+  const thick = 0.075;
+  for (let L = 1; L <= HAIR_LAYERS; L++) {
+    const f = L / HAIR_LAYERS, pos = new Float32Array(P.length);
+    for (let v = 0; v < P.length / 3; v++) {
+      const d = new THREE.Vector3(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]).sub(shell.center).normalize();
+      const out = thick * f * W[v];
+      // strands fall back and slightly down as they leave the scalp
+      pos[v * 3] = P[v * 3] + d.x * out;
+      pos[v * 3 + 1] = P[v * 3 + 1] + d.y * out - out * 0.25 * f;
+      pos[v * 3 + 2] = P[v * 3 + 2] + d.z * out - out * 0.2 * f;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    g.setIndex(keep);
+    g.computeVertexNormals();
+    const shade = 0.5 + 0.6 * f;
+    const mat = new THREE.MeshStandardMaterial({
+      color: hairColor.clone().multiplyScalar(shade), roughness: 0.55 - 0.15 * f, metalness: 0,
+      alphaMap: strands(), alphaTest: 0.08 + f * 0.82, transparent: false, side: THREE.DoubleSide
+    });
+    const m = new THREE.Mesh(g, mat);
+    m.renderOrder = L;
+    group.add(m);
+  }
+  return group;
+}
+
+/*
+ * Clothing in layers: the shirt (colour from under the chin), a collar that
+ * stands around the neck, and an open jacket or top layer over it (colour from
+ * the shoulders), with lapels and soft folds.
+ */
+function buildClothing(spec, shell) {
+  const group = new THREE.Group();
+  group.name = 'shoulders';
+  const outerC = spec.colors.shirt, innerC = spec.colors.inner || spec.colors.shirt;
+  const layered = outerC.clone().sub(innerC).r ** 2 + outerC.clone().sub(innerC).g ** 2 + outerC.clone().sub(innerC).b ** 2 > 0.004;
+  const fabric = (c, rough) => new THREE.MeshPhysicalMaterial({ color: c, roughness: rough, metalness: 0, sheen: 0.6, sheenRoughness: 0.8, sheenColor: c.clone().lerp(new THREE.Color(1, 1, 1), 0.3), side: THREE.DoubleSide });
+  const baseY = spec.chinY - 0.64, cx = shell.center.x, cz = shell.center.z + 0.02;
+
+  // body under the clothes: a rounded torso with shoulders, slightly flattened
+  const torsoShape = (rx, ry, rz, phiStart, phiLen, folds) => {
+    const g = new THREE.SphereGeometry(1, 64, 28, phiStart, phiLen, 0, Math.PI / 2);
+    const a = g.attributes.position;
+    for (let i = 0; i < a.count; i++) {
+      let x = a.getX(i), y = a.getY(i), z = a.getZ(i);
+      // squarer shoulders: push the upper sides out
+      const sq = 1 + 0.18 * Math.max(0, y) * Math.abs(x);
+      // fabric folds: low-frequency ripples, strongest at the sides
+      const fold = folds ? 0.012 * Math.sin(x * 14 + y * 5) * (1 - y) : 0;
+      a.setXYZ(i, x * sq * (1 + fold), y, z * (1 + fold));
+    }
+    g.computeVertexNormals();
+    g.scale(rx, ry, rz);
+    return g;
+  };
+  const shirt = new THREE.Mesh(torsoShape(1.24, 0.5, 0.52, 0, Math.PI * 2, false), fabric(layered ? innerC : outerC, 0.85));
+  shirt.position.set(cx, baseY, cz);
+  group.add(shirt);
+
+  // collar: a short open band standing around the base of the neck
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.36, 0.13, 40, 1, true, Math.PI * 0.18, Math.PI * 1.64), fabric(innerC.clone().multiplyScalar(1.04), 0.8));
+  collar.position.set(cx, spec.chinY - 0.2, shell.center.z + 0.06);
+  collar.rotation.y = Math.PI;
+  group.add(collar);
+
+  if (layered) {
+    // the outer layer, open at the front so the shirt shows through
+    const gap = 0.55;
+    const jacket = new THREE.Mesh(torsoShape(1.3, 0.54, 0.58, Math.PI / 2 + gap / 2, Math.PI * 2 - gap, true), fabric(outerC, 0.9));
+    jacket.position.set(cx, baseY - 0.01, cz);
+    group.add(jacket);
+    // lapels folded back along the opening
+    [-1, 1].forEach((side) => {
+      const lapel = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.42, 0.015), fabric(outerC.clone().multiplyScalar(0.92), 0.85));
+      lapel.position.set(cx + side * 0.2, baseY + 0.3, cz + 0.5);
+      lapel.rotation.set(-0.5, side * -0.35, side * 0.42);
+      group.add(lapel);
+    });
+  }
+  return group;
+}
+
 function buildHead(spec, texture, faceInfo) {
   const group = new THREE.Group();
   group.name = 'zoope-avatar';
@@ -415,16 +548,13 @@ function buildHead(spec, texture, faceInfo) {
   shellMesh.name = 'head';
 
   const skin = spec.colors.skin;
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.3, 0.62, 32, 1, true),
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.29, 0.34, 0.5, 32, 1, true),
     new THREE.MeshStandardMaterial({ color: skin.clone().multiplyScalar(0.86), roughness: 0.85, side: THREE.DoubleSide }));
-  neck.position.set(shell.center.x, spec.chinY - 0.12, shell.center.z + 0.06);
+  neck.position.set(shell.center.x, spec.chinY - 0.1, shell.center.z + 0.06);
   neck.name = 'neck';
 
-  const torso = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24, 0, Math.PI * 2, 0, Math.PI / 2),
-    new THREE.MeshStandardMaterial({ color: spec.colors.shirt, roughness: 0.95 }));
-  torso.scale.set(1.3, 0.52, 0.55);
-  torso.position.set(shell.center.x, spec.chinY - 0.78, shell.center.z + 0.02);
-  torso.name = 'shoulders';
+  const torso = buildClothing(spec, shell);
+  const hairLayers = spec.hairShare > 0.06 ? buildHairLayers(shell, spec.colors.hair) : null;
 
   // the photo's own mouth interior, split so the jaw can open it
   const mouthPieces = [false, true].map((lower) => {
@@ -459,6 +589,7 @@ function buildHead(spec, texture, faceInfo) {
 
   const head = new THREE.Group();
   head.add(faceMesh, shellMesh, cavity, ...mouthPieces);
+  if (hairLayers) head.add(hairLayers);
   // simple ears only when no side photo shows the real ones
   if (!hasSides) {
     const earMat = new THREE.MeshStandardMaterial({ color: skin.clone().multiplyScalar(0.93), roughness: 0.85 });
@@ -536,6 +667,9 @@ function pose(spec, parts, mouth, blink) {
 // For export: glTF can't carry the blending shader, so bake each blended mesh
 // to vertex colours sampled from the atlas (the face keeps its front photo texture).
 function bakeForExport(parts, atlas) {
+  // strand-cut hair layers rely on alpha testing, which glTF viewers don't apply the same way
+  const hair = parts.head.getObjectByName('hair');
+  if (hair) hair.removeFromParent();
   const ctx = atlas.getContext('2d'), W = atlas.width, H = atlas.height;
   const data = ctx.getImageData(0, 0, W, H).data;
   const at = (u, v) => {
@@ -660,8 +794,14 @@ export function attach(canvas, face, getLevel, opts = {}) {
 
     const scene = new THREE.Scene();
     scene.add(parts.group);
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x6b6b78, 1.5));
-    const key = new THREE.DirectionalLight(0xffffff, 1.5);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    scene.add(new THREE.HemisphereLight(0xfff6ee, 0x5d5a66, 1.4));
+    // rim light from behind picks out the hair strands and the shoulders' edge
+    const rim = new THREE.DirectionalLight(0xdfe8ff, 1.3);
+    rim.position.set(-0.6, 1.4, -2.4);
+    scene.add(rim);
+    const key = new THREE.DirectionalLight(0xfff1e4, 1.6);
     key.position.set(0.8, 1.1, 2.2);
     const fill = new THREE.DirectionalLight(0xffffff, 0.9);
     fill.position.set(-1.2, 0.8, -2.0);
