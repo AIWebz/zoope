@@ -964,6 +964,8 @@
   }
   function startLive(r, profile) {
     var name = profile.fullName || profile.preferred || profile.names[0];
+    // get the voice ready before anyone speaks, so the first reply isn't slowed by loading
+    if (liteReady() && neuralState !== 'ready') lite().then(function (m) { return m.warm(); }).catch(function () {});
     setRoomState('opening');
     sys('Opening the ' + PLATFORMS[r.meeting.platform].name + ' meeting in a new tab. zoope joins as ' + name + '.');
     if (!((state.neuralReady || liteReady()) && (state.voiceMode || 'neural') === 'neural')) {
@@ -1005,6 +1007,8 @@
         sys('Couldn\'t open the meeting: ' + err.message);
       });
   }
+  // zoope is for computers: on a phone, the app pages show a notice instead
+  if (IS_PHONE) document.documentElement.classList.add('phone');
   // browser extensions don't run on phones, so real calls are joined from a computer
   if (IS_PHONE) {
     $('extStatus').textContent = 'Needs a computer';
@@ -1038,7 +1042,8 @@
     var r = room;
     r.queue = r.queue.then(function () {
       if (room !== r) return;
-      return new Promise(function (res) { setTimeout(res, 600); }).then(function () { // natural pause before speaking
+      // a short natural pause before speaking; in real calls keep it tight so replies don't lag
+      return new Promise(function (res) { setTimeout(res, r.live ? 150 : 450); }).then(function () {
         if (room !== r) return;
         if (r.live) {
           if (!r.session) return;

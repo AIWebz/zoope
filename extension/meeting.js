@@ -101,7 +101,8 @@
     });
     lines.forEach((r, el) => {
       const gone = !el.isConnected;
-      if (gone || now - r.changed > 1300) flush(r);
+      const ended = /[.?!]$/.test(r.text);
+      if (gone || now - r.changed > (ended ? 450 : 800)) flush(r);
       if (gone) lines.delete(el);
     });
   }
@@ -153,13 +154,13 @@
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ---- the join flow
-  let joinedAt = 0;
+  let joinedAt = 0, captionTimer = null;
   let state = 'opening', named = new WeakSet(), lastJoin = 0, captionTries = 0, captionsState = null, tick = null;
   function setState(s, detail) {
     if (state === s) return;
     state = s;
     send({ type: 'status', state: s, detail: detail || '', platform: P.id, url: location.href });
-    if (s === 'left' || s === 'error') clearInterval(tick);
+    if (s === 'left' || s === 'error') { clearInterval(tick); clearInterval(captionTimer); }
   }
 
   function step(session) {
@@ -176,7 +177,7 @@
         captionsState = P.captionsOn();
         if (captionTries === 12 && captionsState !== 'on') send({ type: 'log', text: 'captions: could not turn them on; turn on captions in the meeting so zoope can follow it' });
       }
-      readCaptions();
+      if (!captionTimer) captionTimer = setInterval(() => { try { readCaptions(); } catch (e) { /* page changing */ } }, 150);
       return;
     }
     if (P.lobby.test(text)) { setState('lobby', 'Waiting to be let in.'); return; }

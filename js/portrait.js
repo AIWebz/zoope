@@ -192,6 +192,7 @@ async function build(P) {
     img, W, H, pts, tris, z, headW, jawW, bodyW, n, N, faceH, faceW, faceCx, chin, top: headTop, eyes,
     pivot: [faceCx, (lm[234][1] + lm[454][1]) / 2, hrz * 0.35],
     mouthOpenInPhoto: lm[14][1] - lm[13][1] > faceH * 0.02,
+    browSet: new Set([70, 63, 105, 66, 107, 55, 65, 52, 53, 46, 300, 293, 334, 296, 336, 285, 295, 282, 283, 276]),
     mouthC: [(lm[61][0] + lm[291][0]) / 2, (lm[13][1] + lm[14][1]) / 2], mouthW: Math.abs(lm[291][0] - lm[61][0])
   };
   cache.set(key, out);
@@ -314,6 +315,7 @@ export function attach(canvas, face, getLevel, opts = {}) {
 
     // animation state
     let lastNow = 0, sylAmp = 1, inSyl = false;
+    let nextPose = 0, poseT = [0, 0, 0], poseC = [0, 0, 0], poseV = [0, 0, 0], browS = 0, browT = 0;
     let mouth = 0, wide = 0, wideS = 0, roundS = 0, teethS = 0, blinkAt = performance.now() + 1600, nextSacc = 0, gaze = [0, 0], gazeT = [0, 0];
     let nod = 0, nodV = 0, lastLevel = 0, talkT = 0;
     const cur = new Float32Array(M.N * 2);
@@ -342,6 +344,7 @@ export function attach(canvas, face, getLevel, opts = {}) {
             if (UPPER_SET.has(i)) y -= M.faceH * 0.012 * teethS * f;
           }
         }
+        if (M.browSet && M.browSet.has(i)) y -= M.faceH * 0.02 * (M.browLift || 0);
         cur[i * 2] = x; cur[i * 2 + 1] = y;
       }
       M.eyes.forEach((e) => {
@@ -370,7 +373,11 @@ export function attach(canvas, face, getLevel, opts = {}) {
       roundS += ((sh.round || 0) - roundS) * ease(0.11);
       teethS += ((sh.teeth || 0) - teethS) * ease(0.06);
       const level = mouth;
-      if (target > 0.3 && !inSyl) { inSyl = true; sylAmp = 0.8 + Math.random() * 0.3; }
+      if (target > 0.3 && !inSyl) {
+        inSyl = true; sylAmp = 0.8 + Math.random() * 0.3;
+        // stressed syllables: a small nod and sometimes a brow lift, like a speaker's beat gestures
+        if (target > 0.55) { nodV += 0.0035 + Math.random() * 0.004; if (Math.random() < 0.35) browT = 0.6 + Math.random() * 0.4; }
+      }
       else if (target < 0.12) inSyl = false;
       if (level > 0.25 && lastLevel <= 0.25) { wide = Math.random(); nodV -= 0.006 + Math.random() * 0.008; talkT = s; }
       lastLevel = level;
@@ -390,10 +397,29 @@ export function attach(canvas, face, getLevel, opts = {}) {
       // emphasis nods: a damped spring kicked at the start of phrases
       nodV += -nod * 0.02 - nodV * 0.12; nod += nodV;
 
+      // posture: people hold a pose for a few seconds, then shift and settle (a damped spring),
+      // with more and bigger shifts while talking; tiny tremor keeps it from looking frozen
+      const talking = s - talkT < 1.2;
+      if (now > nextPose) {
+        const k = talking ? 1 : 0.55;
+        poseT = [(Math.random() - 0.5) * 0.09 * k, (Math.random() - 0.5) * 0.05 * k, (Math.random() - 0.5) * 0.045 * k];
+        nextPose = now + (talking ? 900 + Math.random() * 1800 : 2200 + Math.random() * 4500);
+        // the eyes lead a head turn, then come back to the camera
+        if (Math.random() < 0.5) { gazeT = [poseT[0] * 0.9, -poseT[1] * 0.5]; nextSacc = now + 350 + Math.random() * 400; }
+      }
+      for (let k = 0; k < 3; k++) {
+        poseV[k] += ((poseT[k] - poseC[k]) * 22 - poseV[k] * 8.5) * dt;
+        poseC[k] += poseV[k] * dt;
+      }
+      // eyebrows lift on stressed syllables and settle
+      browS += ((talking ? browT : 0) - browS) * (1 - Math.exp(-dt / 0.12));
+      browT *= Math.exp(-dt / 0.35);
+      M.browLift = browS;
       deform(mouth, blink);
-      const yaw = Math.sin(s * 0.41) * 0.045 + Math.sin(s * 0.93 + 1.3) * 0.018;
-      const pitch = Math.sin(s * 0.33 + 0.7) * 0.022 + nod - mouth * 0.012;
-      const roll = Math.sin(s * 0.27 + 2.1) * 0.018;
+      const tremor = (f, ph) => Math.sin(s * f + ph) * 0.0025;
+      const yaw = poseC[0] + tremor(1.7, 0.3) + tremor(2.9, 1.1);
+      const pitch = poseC[1] + nod - mouth * 0.012 + tremor(2.3, 2.0);
+      const roll = poseC[2] + tremor(1.3, 0.7);
       const breath = Math.sin(s * Math.PI * 2 / 4.6);
       const cyw = Math.cos(yaw), syw = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch), cr = Math.cos(roll), sr = Math.sin(roll);
 

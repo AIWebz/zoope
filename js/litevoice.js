@@ -14,7 +14,13 @@ import factory from '../vendor/espeak-ng/espeak-ng.js';
 
 const WASM = new URL('../vendor/espeak-ng/espeak-ng.wasm', import.meta.url).href;
 const PASSAGE = "Hi everyone, thanks for having me. Quick update on the redesign: we're on track, the checkout page is nearly finished, and I'll send notes after the call. Let me know if you have any questions.";
-let binP = null;
+let binP = null, modP = null;
+/* Compiled once and reused: compiling 18 MB of WebAssembly per reply would add a noticeable delay. */
+function compiled() {
+  if (!modP) { modP = wasm().then((b) => WebAssembly.compile(b)); modP.catch(() => { modP = null; }); }
+  return modP;
+}
+export function warm() { return compiled().then(() => true).catch(() => false); }
 function wasm() {
   if (!binP) {
     binP = fetch(WASM).then((r) => { if (!r.ok) throw new Error(r.status + ' loading the speech synthesizer'); return r.arrayBuffer(); })
@@ -26,11 +32,12 @@ function wasm() {
 
 /* Text to speech samples with eSpeak NG. */
 export async function synth(text, v) {
-  const wasmBinary = await wasm();
+  const mod = await compiled();
   const clean = String(text).replace(/\s+/g, ' ').trim() || '.';
   const es = await factory({
+    instantiateWasm: (imports, done) => { WebAssembly.instantiate(mod, imports).then((inst) => done(inst, mod)); return {}; },
     arguments: ['-w', 'out.wav', '-v', v.voice, '-p', String(v.pitch), '-s', String(v.speed), '-a', '130', '-g', '2', clean.startsWith('-') ? ' ' + clean : clean],
-    wasmBinary, print: () => {}, printErr: () => {}
+    print: () => {}, printErr: () => {}
   });
   const wav = es.FS.readFile('out.wav');
   const dv = new DataView(wav.buffer, wav.byteOffset, wav.byteLength);
@@ -158,20 +165,12 @@ export async function render(text, v) {
  * out: { context, destination, onEnvelope } sends it into a meeting instead.
  */
 export async function speak(text, v, onLevel, out) {
-  const { samples, rate } = await render(text, v);
   const AC = window.AudioContext || window.webkitAudioContext;
   const ac = out ? out.context : new AC();
   await ac.resume();
-  const buf = ac.createBuffer(1, samples.length, rate);
-  buf.getChannelData(0).set(samples);
-  const src = ac.createBufferSource();
-  src.buffer = buf;
   const analyser = ac.createAnalyser();
   analyser.fftSize = 512;
-  src.connect(analyser);
   analyser.connect(out ? out.destination : ac.destination);
-  const at = ac.currentTime + 0.05;
-  if (out && out.onEnvelope) out.onEnvelope({ at: Date.now() + 50, step: 20, shapes: window.ZoopeVoice.shapeTrack(samples, rate, 20) });
   const td = new Float32Array(analyser.fftSize);
   let playing = true;
   (function meter() {
@@ -180,7 +179,24 @@ export async function speak(text, v, onLevel, out) {
     if (onLevel) onLevel(window.ZoopeVoice.shapeOf(td, ac.sampleRate));
     requestAnimationFrame(meter);
   })();
-  await new Promise((resolve) => { src.onended = resolve; src.start(at); });
+  // sentence by sentence: the first one plays while the next is being made
+  const parts = String(text).match(/[^.!?]+[.!?]*\s*/g) || [text];
+  let cursor = ac.currentTime + 0.03, last = null, next = render(parts[0], v);
+  for (let i = 0; i < parts.length; i++) {
+    const { samples, rate } = await next;
+    if (i + 1 < parts.length) next = render(parts[i + 1], v);
+    const buf = ac.createBuffer(1, samples.length, rate);
+    buf.getChannelData(0).set(samples);
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    src.connect(analyser);
+    if (cursor < ac.currentTime) cursor = ac.currentTime + 0.01;
+    if (out && out.onEnvelope) out.onEnvelope({ at: Date.now() + (cursor - ac.currentTime) * 1000, step: 20, shapes: window.ZoopeVoice.shapeTrack(samples, rate, 20) });
+    src.start(cursor);
+    cursor += buf.duration;
+    last = src;
+  }
+  await new Promise((resolve) => { if (!last) return resolve(); last.onended = resolve; });
   playing = false;
   analyser.disconnect();
   if (onLevel) onLevel({ open: 0, wide: 0, round: 0, teeth: 0 });

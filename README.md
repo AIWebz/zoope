@@ -4,6 +4,8 @@ zoope is an AI avatar that goes to your Zoom, Google Meet and Microsoft Teams me
 
 The whole AI engine runs in the browser scripts. It uses no APIs and no servers, and your face and voice stay on your device.
 
+zoope is made for computers (Chrome or Edge on a Mac or PC). On a phone, the app pages show a notice instead.
+
 ## Run it
 
 The site has two parts:
@@ -49,6 +51,9 @@ If you host zoope somewhere other than localhost, `*.github.io`, `*.pages.dev`, 
 zoope speaks in the first person as you ("Hi, I'm Alex"). It will not lie about what it is: if someone sincerely asks whether it's a bot or an AI, it says it's your AI avatar speaking from your notes. It shares facts only from your notes, and only when a note clearly matches the question. It never agrees, commits or gives an opinion on your behalf. When it doesn't know something, it says so and passes the question on to you.
 
 ### When zoope speaks (`js/engine.js`)
+
+- **Just your name** ("Alex?", "Hey Alex") gets "Yes?". If the same person keeps talking, their next line is treated as meant for you and answered.
+- **One-on-one:** with only one other person in the meeting, zoope answers every finished line, not just questions.
 
 Every line said in a meeting gets a score. zoope speaks when the score reaches 0.5 or more.
 

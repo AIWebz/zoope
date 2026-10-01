@@ -1075,3 +1075,13 @@ body.leaving .site, body.leaving .app { opacity: 0; transition: opacity .16s eas
   .room-actions { flex-wrap: wrap; }
   .transcript { max-height: 50vh; }
 }
+
+/* phones: the app is for computers */
+.phone-gate { display: none; }
+html.phone body:not([data-route="home"]) .phone-gate {
+  display: grid; place-items: center; position: fixed; inset: 0; z-index: 1000; padding: 24px;
+  background: var(--gray-0, #fff); text-align: center;
+}
+.phone-gate > div { max-width: 340px; display: grid; gap: 12px; justify-items: center; }
+.phone-gate b { font-size: 20px; color: var(--gray-950, #09090b); }
+.phone-gate p { font-size: 15px; line-height: 1.55; color: var(--gray-600, #52525b); }

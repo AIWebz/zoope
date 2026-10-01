@@ -31,7 +31,7 @@
   var OPINION = /\b(what do you think|thoughts|your (take|opinion|view)|do you agree|agree\?|how do you feel|sound good|sounds good\?|make sense\?)\b/i;
   var REQUEST = /\b(can|could|would|will) you (please )?(send|share|take|handle|own|look|check|write|draft|review|follow|prepare|set up|update|fix|finish|send over|circle back|ping|email|book|schedule|create|put together)\b/i;
   var DEADLINE = /\b(by|before|until|due|on)\s+(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|end of (the )?(day|week|month)|eod|eow|next week|next \w+|\w+ \d{1,2}(st|nd|rd|th)?)\b/i;
-  var TRAILING = /(\b(and|but|so|because|or|um|uh|like)|,|…|\.\.\.)\s*$/i;
+  var TRAILING = /(\b(and|but|so|because|or|um|uh|like|the|a|an|to|of|with|for|that|if|when|is|are|was|we|i)|,|…|\.\.\.)\s*$/i;
   var THIRD_PERSON_AFTER = /^('s|\s+(is|was|has|had|will|said|did|does|and|or|mentioned|thinks|told))\b/i;
 
   function norm(s) { return String(s || '').toLowerCase().replace(/[’`]/g, "'"); }
@@ -134,6 +134,8 @@
     this.pendingShares = notes.filter(function (n) { return n.kind === 'share'; }).map(function (n) { return { id: n.id, text: n.text }; });
     this.sharedNotes = [];
     this.attendees = (opts.attendees || []).map(function (a) { return a.trim(); }).filter(Boolean);
+    this.speakers = [];
+    this.summoned = null;
     this.threshold = opts.threshold || 0.5;
     this.history = [];
     this.turn = 0;
@@ -217,7 +219,7 @@
     var entry = { turn: this.turn, speaker: speaker, text: text, ai: false };
     this.history.push(entry);
 
-    var reasons = [], score = 0;
+    var reasons = [], score = 0, self0 = this;
     var t = String(text || '').trim();
     var question = this.isQuestion(t);
     var nameUse = this.findMyName(t);
@@ -234,6 +236,22 @@
       score += 0.15;
       reasons.push('Talked about, not to (+0.15)');
     }
+
+    // just my name ("Alex?", "Hey Alex") means they want my attention: answer "Yes?"
+    var rest = norm(t).replace(/[^a-z' ]/g, ' ').split(/\s+/).filter(function (w) {
+      return w && !/^(hey|so|um|uh|ok|okay|and|oh|yo|excuse|me|sorry|quick|question)$/.test(w) && !self0.isMyName(w);
+    });
+    var summon = nameUse === 'vocative' && rest.length === 0;
+    if (summon) { score += 0.9; reasons.push('Just my name: they want my attention (+0.9)'); intent = 'summon'; }
+    // after "Alex?" … "Yes?", their next line is for me
+    var afterSummon = !nameUse && this.summoned && this.summoned.speaker === speaker && this.turn - this.summoned.turn <= 2;
+    if (afterSummon) { score += 0.9; reasons.push('Continuing after calling me (+0.9)'); }
+    this.summoned = summon ? { speaker: speaker, turn: this.turn } : (afterSummon ? null : this.summoned);
+
+    // one-on-one: with only one other person, every finished line is for me
+    if (speaker && this.speakers.indexOf(speaker) < 0) this.speakers.push(speaker);
+    var oneOnOne = this.attendees.length <= 1 && this.speakers.length === 1;
+    if (oneOnOne && !summon && !afterSummon && !other) { score += 0.8; reasons.push('One-on-one: I answer every turn (+0.8)'); }
 
     if (other && nameUse !== 'vocative') {
       score -= 0.9;
@@ -273,7 +291,7 @@
       reasons.push('Meeting is wrapping up (+0.55)');
     }
 
-    if (turnsSinceMe === 1 && nameUse !== 'vocative' && !followUp && intent !== 'farewell') {
+    if (turnsSinceMe === 1 && nameUse !== 'vocative' && !followUp && intent !== 'farewell' && !oneOnOne && !afterSummon) {
       score -= 0.2;
       reasons.push('I just spoke — avoid dominating (−0.2)');
     }
@@ -298,7 +316,8 @@
 
     score = Math.max(-1, Math.min(1.5, score));
     var speak = score >= this.threshold;
-    this.addressedByName = nameUse === 'vocative';
+    this.addressedByName = nameUse === 'vocative' || afterSummon;
+    this.oneOnOne = oneOnOne;
     var reply = speak ? this.respond(speaker, t, intent, hits) : null;
     if (reply && this.history.some(function (h) { return h.ai && h.text === reply; }) && reply.length > 40) {
       reply = 'Like I said, ' + reply.charAt(0).toLowerCase() + reply.slice(1);
@@ -367,6 +386,9 @@
     var reply;
 
     switch (intent) {
+      case 'summon':
+        reply = 'Yes?';
+        break;
       case 'aicheck':
         reply = 'Fair question. This is my AI avatar, speaking for me from my notes. I\'m not on the call live, and I\'ll get a summary afterwards.';
         break;
@@ -415,7 +437,20 @@
         reply = 'I don\'t have that in front of me, ' + who + '. I\'ll get back to you after the call.';
         break;
       default:
-        reply = known ? say(known) : 'Got it, thanks ' + who + '.';
+        if (known) { reply = say(known); break; }
+        // a statement: acknowledge it in a way that fits what was said, and keep the conversation going
+        if (/\b(sorry|unfortunately|problem|issue|bug|blocked|delay(ed)?|late|behind|broke|broken|stuck)\b/i.test(t)) {
+          reply = pick(['Ah, okay. What do you need from me to get it unblocked?', 'Thanks for flagging it. Is there anything I can do to help?', 'Okay, good to know. What\'s the plan to fix it?'], seed);
+        } else if (/\b(done|finished|shipped|launched|fixed|approved|merged|on track|great news|signed)\b/i.test(t)) {
+          reply = pick(['Nice, that\'s great to hear.', 'Great, thanks ' + who + '.', 'Love it. What\'s next on that?'], seed);
+        } else if (/\b(i think|i feel|in my opinion|maybe we|we should|what if)\b/i.test(t)) {
+          reply = pick(['That makes sense. Let me think it over and I\'ll get back to you with my take.', 'Interesting idea. I\'ll look at it properly after the call.'], seed);
+          this.followUp(speaker, t);
+        } else if (this.oneOnOne || this.addressedByName) {
+          reply = pick(['Got it.', 'Okay, makes sense.', 'Right, thanks ' + who + '.', 'Okay. Anything else on that?', 'Mm-hm, got it.'], seed);
+        } else {
+          reply = 'Got it, thanks ' + who + '.';
+        }
     }
     // the first time zoope is addressed, it also brings up anything the user asked it to share
     if (this.pendingShares.length && this.addressedByName && ['aicheck', 'farewell', 'update', 'hearcheck', 'greeting'].indexOf(intent) < 0 && !this.sharedOnce) {
