@@ -93,9 +93,8 @@ export async function speak(text, onLevel, out) {
   (function meter() {
     if (!playing) return;
     analyser.getFloatTimeDomainData(td);
-    let rms = 0;
-    for (let i = 0; i < td.length; i++) rms += td[i] * td[i];
-    if (onLevel) onLevel(Math.min(1, Math.sqrt(rms / td.length) * 5));
+    // the mouth takes the shape of the sound being played (open, spread, rounded, teeth)
+    if (onLevel) onLevel(window.ZoopeVoice.shapeOf(td, ac.sampleRate));
     requestAnimationFrame(meter);
   })();
 
@@ -117,20 +116,14 @@ export async function speak(text, onLevel, out) {
   await new Promise((resolve) => setTimeout(resolve, Math.max(0, (lastEnd - ac.currentTime) * 1000) + 60));
   playing = false;
   analyser.disconnect();
-  if (onLevel) onLevel(0);
+  if (onLevel) onLevel({ open: 0, wide: 0, round: 0, teeth: 0 });
   if (!out) ac.close();
 }
 
-/* Mouth openness every 20 ms of a chunk of samples, starting at wall-clock time `at`. */
+/* Mouth shapes every 20 ms of a chunk of samples, starting at wall-clock time `at`. */
 export function envelope(samples, rate, at) {
-  const step = 20, n = Math.max(1, Math.round(rate * step / 1000)), levels = [];
-  for (let i = 0; i < samples.length; i += n) {
-    let rms = 0;
-    const end = Math.min(samples.length, i + n);
-    for (let j = i; j < end; j++) rms += samples[j] * samples[j];
-    levels.push(Math.round(Math.min(1, Math.sqrt(rms / (end - i)) * 5) * 100) / 100);
-  }
-  return { at, step, levels };
+  const step = 20;
+  return { at, step, shapes: window.ZoopeVoice.shapeTrack(samples, rate, step) };
 }
 
 export function cancel() { if (engine) engine.cancel(); }

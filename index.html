@@ -62,11 +62,11 @@
         <div class="hero-copy">
           <a href="#/clone" class="announce enter" style="--d:0">
             <span class="announce-tag">New</span>
-            3D avatars and neural voice cloning
+            Live avatars and neural voice cloning
             <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg>
           </a>
           <h1 class="hero-wordmark enter" style="--d:1">zoope</h1>
-          <p class="hero-lede enter" style="--d:2">An AI assistant that stands in for you at meetings, with a 3D avatar of you, a voice made from yours, and the judgement to know when to speak. It joins your real Zoom, Meet and Teams calls and speaks as you, and if someone sincerely asks, it says it's an AI.</p>
+          <p class="hero-lede enter" style="--d:2">An AI assistant that stands in for you at meetings, with a live, photo-real avatar of you, a voice made from yours, and the judgement to know when to speak. It joins your real Zoom, Meet and Teams calls and speaks as you, and if someone sincerely asks, it says it's an AI.</p>
           <div class="hero-actions enter" style="--d:3">
             <a href="#/setup" class="btn btn-primary btn-lg">Get started <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a>
             <a href="#/demo" class="btn btn-secondary btn-lg"><svg class="icon icon-fill" aria-hidden="true"><use href="#i-play"/></svg> Watch the demo</a>
@@ -111,7 +111,7 @@
         <ol class="steps">
           <li><span class="step-num">01</span><h3>Connect</h3><p>Link Zoom, Google Meet or Microsoft Teams, and tell zoope every name people call you.</p></li>
           <li><span class="step-num">02</span><h3>Teach</h3><p>Write the updates and facts it may share. Anything else becomes a follow-up, never a guess.</p></li>
-          <li><span class="step-num">03</span><h3>Clone</h3><p>A four-angle head scan becomes a 3D avatar, and a 15-second recording becomes your voice.</p></li>
+          <li><span class="step-num">03</span><h3>Clone</h3><p>One face scan becomes a live avatar that lip-syncs to every word, and a 15-second recording becomes your voice.</p></li>
           <li><span class="step-num">04</span><h3>Confirm</h3><p>Approve each meeting. At the start time zoope opens its meeting room, and afterwards hands you a summary.</p></li>
         </ol>
       </div>
@@ -151,7 +151,7 @@
           <h2>Everything a stand-in needs. Nothing it doesn't.</h2>
         </header>
         <div class="feature-grid">
-          <article><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg><h3>3D avatar</h3><p>A 3D head built from a scan of your face, both sides and the back of your head. It talks, blinks, and exports as .glb.</p></article>
+          <article><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg><h3>Live avatar</h3><p>Your real face from one scan, brought to life: it shapes each sound it says, blinks, glances and moves like you on camera.</p></article>
           <article><svg class="icon" aria-hidden="true"><use href="#i-wave"/></svg><h3>Your voice</h3><p>A neural model clones your voice from a 15-second sample and speaks any sentence in it.</p></article>
           <article><svg class="icon" aria-hidden="true"><use href="#i-brain"/></svg><h3>Grounded answers</h3><p>Answers only from the notes you write. Unknowns become follow-ups.</p></article>
           <article><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg><h3>Action items</h3><p>“Could you draft the email by Thursday?” lands in your summary with its due date.</p></article>
@@ -166,7 +166,7 @@
         <div class="split-copy">
           <span class="eyebrow">Privacy</span>
           <h2>Your face and voice never leave this device.</h2>
-          <p>The decision engine, face model, 3D renderer and voice model all run in your browser. There are no API calls and no uploads. The voice model downloads once and is cached on your device.</p>
+          <p>The decision engine, face model, avatar renderer and voice model all run in your browser. There are no API calls and no uploads. The voice model downloads once and is cached on your device.</p>
         </div>
         <dl class="stat-grid">
           <div><dt>Servers that see your data</dt><dd>0</dd></div>
@@ -330,7 +330,7 @@
           <header class="page-header">
             <div>
               <h1>Face &amp; voice</h1>
-              <p>Scan your head in four steps to build a 3D avatar, then scan your voice and make a voice from it. Everything is processed on this device.</p>
+              <p>Scan your face to make your live avatar, then scan your voice and make a voice from it. Everything is processed on this device.</p>
             </div>
             <button type="button" class="btn btn-primary" id="startCam"><svg class="icon" aria-hidden="true"><use href="#i-video"/></svg><span>Enable camera &amp; mic</span></button>
           </header>
@@ -341,10 +341,7 @@
               <span class="pill" id="faceBadge">0 / 4 captured</span>
             </div>
             <ol class="scan-steps" id="scanSteps">
-              <li data-step="0"><button type="button"><span class="ss-thumb"></span><span class="ss-text"><b>1. Face &amp; hair</b><em>Front</em></span></button></li>
-              <li data-step="1"><button type="button"><span class="ss-thumb"></span><span class="ss-text"><b>2. Right side</b><em>Turn left</em></span></button></li>
-              <li data-step="2"><button type="button"><span class="ss-thumb"></span><span class="ss-text"><b>3. Left side</b><em>Turn right</em></span></button></li>
-              <li data-step="3"><button type="button"><span class="ss-thumb"></span><span class="ss-text"><b>4. Back of head</b><em>Turn around</em></span></button></li>
+              <li data-step="0"><button type="button"><span class="ss-thumb"></span><span class="ss-text"><b>Face &amp; hair</b><em>Front</em></span></button></li>
             </ol>
             <div class="face-grid">
               <div class="viewport">
@@ -368,19 +365,13 @@
                 <p class="hint" id="scanStatus">Enable the camera to start the scan.</p>
                 <div class="avatar-stage">
                   <canvas id="avatarCanvas" width="400" height="400"></canvas>
-                  <span class="drag-hint hidden" id="dragHint">Drag to rotate</span>
-                  <div class="seg stage-mode hidden" id="avatarMode" role="radiogroup" aria-label="Avatar view">
-                    <label><input type="radio" name="avatarMode" value="live" checked><span>Live</span></label>
-                    <label><input type="radio" name="avatarMode" value="3d"><span>3D model</span></label>
-                  </div>
                 </div>
                 <dl class="kv">
                   <div><dt>Model</dt><dd id="avatarInfo">None yet</dd></div>
-                  <div><dt>Measured</dt><dd id="avatarMeasured">–</dd></div>
+                  <div><dt>Mesh</dt><dd id="avatarMeasured">–</dd></div>
                 </dl>
                 <div class="btn-row">
                   <button type="button" class="btn btn-secondary" id="testVoice" disabled><svg class="icon" aria-hidden="true"><use href="#i-volume"/></svg>Preview</button>
-                  <button type="button" class="btn btn-secondary" id="downloadModel" disabled title="Download the 3D model as a .glb file"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>.glb</button>
                 </div>
               </div>
             </div>

@@ -17,16 +17,13 @@ Open `index.html` through any static server, for example `python3 -m http.server
 
 ## How it works
 
-The face, segmentation, 3D and voice runtimes are bundled in `vendor/`. The only thing fetched from outside is the voice model's weights, once, when you make your voice.
+The face, segmentation, avatar rendering and voice runtimes are bundled in `vendor/`. The only thing fetched from outside is the voice model's weights, once, when you make your voice.
 
 1. **Link** the Zoom, Google Meet or Microsoft Teams accounts you use. zoope saves them; it doesn't sign in.
 2. **Names:** zoope asks for your full name, the names and nicknames people call you, and which one to introduce itself with.
-3. **Head scan → 3D model (four steps):**
-   1. **Face and hair:** the bundled MediaPipe Face Landmarker finds 478 points on your face, with depth, and a person-part segmenter (hair, face skin, clothes…) measures your hair colour, crown height and head width.
-   2. **Right side** and 3. **left side:** you turn your head about 90°. zoope checks which way you turned, rejects the wrong side, and measures your head depth from the outline.
-   4. **Back of head:** you turn around. zoope checks it can't see your face.
+3. **Face scan → live avatar:** after a countdown, the bundled MediaPipe Face Landmarker finds 478 points on your face, with depth, and a person segmenter outlines your head, hair and shoulders. `js/portrait.js` turns that camera photo into a live avatar. A depth mesh over the real photo turns, nods and tilts the head slightly, blinks, moves the eyes and breathes, with light sensor grain so it reads as webcam video.
 
-   A countdown with beeps lets you follow along without looking at the screen. `js/avatar3d.js` sizes the skull from those measurements, then blends the four photos onto the head in a shader, weighting each by how directly it saw that spot. It renders with WebGL (three.js), blinks, lip-syncs, and turns all the way around once every view is captured. **Download .glb** exports the model, with the blend baked into colours.
+   **Lip sync by sound:** the mouth takes the shape of each sound, not just its volume. With your neural voice, every 20 ms of audio is measured: loudness opens the jaw, hiss (s, f, sh) shows the teeth, and where the energy sits in the spectrum separates rounded vowels ("oo", "oh": lips pulled in and pursed) from spread ones ("ee": lips widened, corners up). With the browser voice, each word is sounded out into visemes (m/b/p close the lips, f/v put the lip to the teeth, and so on), timed from the speech engine's word boundaries.
 4. **Voice (two steps):**
    1. **Scan your voice:** read a passage for 15 seconds. zoope measures your typical pitch, pitch range, speaking pace and brightness (timbre), and plots your pitch contour.
    2. **Make your voice:** Kyutai's Pocket TTS, a 100M-parameter neural TTS model with zero-shot voice cloning, encodes that recording and then generates every sentence in your voice. It runs in the browser through onnxruntime-web in a Web Worker, and nothing is uploaded. The weights (~216 MB) download once from Hugging Face and are cached; see `vendor/README.md` to self-host them. If the model can't load, zoope falls back to the browser's voice tuned to your measured pitch and pace, and tells you that it is not your voice.
@@ -69,5 +66,6 @@ Requests like "Alex, could you draft the email by Thursday?" become action items
 ### Limits
 
 - **Meetings:** real calls need the extension, and the zoope tab must stay open during the meeting. Platforms change their web apps often. The extension finds buttons by their visible names, but it has only been tested against mock pages, not the live Zoom, Meet and Teams sites, so a platform update can break a step. If captions can't be turned on automatically, turn them on in the meeting yourself. Some hosts block guests or web-client joins. Tell participants an AI avatar is attending, or get their consent, where the law or your workplace requires it.
-- **Face:** the 3D head is built from four photos, so it's an approximation. The face itself comes from the 478-point mesh, but the skull is a fitted shape textured from the photos, not a dense scan. Hair volume, ears and the seams between photos are approximate, and the result depends on even lighting and staying the same distance from the camera.
+- **Face:** the live avatar animates one photo, so the head only turns a few degrees. Scan with your mouth closed and in even light for the most natural mouth movement.
+- **Voice on phones:** the voice model needs about 1 GB of memory while it loads, more than phone browsers give a tab (the phone resets the page), so zoope makes your voice only on a computer. On a phone you can still scan your voice, and zoope uses the browser voice tuned to it.
 - **Voice:** making your voice needs the one-time model download, so the first time needs internet. A zero-shot clone sounds close to you rather than identical, and a quiet room helps. Clone only your own voice, or one you have permission to use.

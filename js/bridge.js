@@ -105,13 +105,7 @@
       src.connect(self.audio.destination);
       var at = ac.currentTime + 0.05;
       src.start(at);
-      var step = 20, n = Math.round(rate * step / 1000), levels = [];
-      for (var i = 0; i < samples.length; i += n) {
-        var rms = 0, end = Math.min(samples.length, i + n);
-        for (var j = i; j < end; j++) rms += samples[j] * samples[j];
-        levels.push(Math.round(Math.min(1, Math.sqrt(rms / (end - i)) * 5) * 100) / 100);
-      }
-      self._send({ type: 'mouth', env: { at: Date.now() + 50, step: step, levels: levels } });
+      self._send({ type: 'mouth', env: { at: Date.now() + 50, step: 20, shapes: ZoopeVoice.shapeTrack(samples, rate, 20) } });
       return new Promise(function (resolve) { src.onended = resolve; });
     });
   };

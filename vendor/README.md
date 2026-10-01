@@ -5,7 +5,7 @@ These files are bundled so zoope runs fully offline, with no API calls.
 - `mediapipe/`: `@mediapipe/tasks-vision` 1.0.1 (Apache-2.0, © Google LLC). This is the JS bundle plus the WebAssembly runtime (SIMD and non-SIMD builds).
 - `models/face_landmarker.task`: the MediaPipe Face Landmarker model (float16, v1, Apache-2.0). It finds 478 points on a face.
 - `fonts/`: Geist Sans and Geist Mono variable fonts (SIL Open Font License 1.1, © Vercel). See `fonts/OFL.txt`.
-- `three/`: three.js r186 (`three.module.js`, `three.core.js`) and `GLTFExporter.js` (MIT, © three.js authors). Renders and exports the 3D avatar.
+- `three/`: three.js r186 (`three.module.js`, `three.core.js`) (MIT, © three.js authors). Renders the live avatar.
 - `onnxruntime/`: onnxruntime-web 1.29 WebAssembly build (MIT, © Microsoft). Runs the neural voice model.
 - `pocket-tts/`: pocket-tts-onnx 0.1.0 (CC BY 4.0, © thewh1teagle), the browser runtime for Kyutai's Pocket TTS. Its imports are rewritten to local paths so it runs without a bundler.
 

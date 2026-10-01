@@ -33,14 +33,17 @@
   // ---- the avatar, drawn into a canvas the page turns into its camera
   const LAG = 90; // ms of WebRTC delay on the voice
   let envelopes = [];
+  const REST = { open: 0, wide: 0, round: 0, teeth: 0 };
   function mouthLevel() {
     const now = Date.now() - LAG;
-    envelopes = envelopes.filter((e) => e.at + e.levels.length * e.step > now - 1000);
+    envelopes = envelopes.filter((e) => e.at + (e.shapes || e.levels).length * e.step > now - 1000);
     for (const e of envelopes) {
-      const i = Math.floor((now - e.at) / e.step);
-      if (i >= 0 && i < e.levels.length) return e.levels[i];
+      const i = Math.floor((now - e.at) / e.step), list = e.shapes || e.levels;
+      if (i < 0 || i >= list.length) continue;
+      const v = list[i];
+      return Array.isArray(v) ? { open: v[0], wide: v[1], round: v[2], teeth: v[3] } : { open: v, wide: 0, round: 0, teeth: 0 };
     }
-    return 0;
+    return REST;
   }
   let canvasP = null;
   function avatarCanvas() {
@@ -75,7 +78,7 @@
     const ctx = c.getContext('2d');
     const draw = () => {
       ctx.fillStyle = '#18181b'; ctx.fillRect(0, 0, c.width, c.height);
-      ctx.fillStyle = '#0b5cff'; ctx.beginPath(); ctx.arc(640, 330, 120 + mouthLevel() * 6, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#0b5cff'; ctx.beginPath(); ctx.arc(640, 330, 120 + mouthLevel().open * 6, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.font = 'bold 120px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(String(name || '?').charAt(0).toUpperCase(), 640, 336);
       setTimeout(draw, 1000 / 15);

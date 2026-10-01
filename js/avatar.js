@@ -215,14 +215,7 @@
     ctx.restore();
   }
 
-  var avatar3dModule = null, portraitModule = null;
-  function load3D() {
-    if (!avatar3dModule) {
-      avatar3dModule = import(new URL('js/avatar3d.js', document.baseURI).href);
-      avatar3dModule.catch(function () { avatar3dModule = null; });
-    }
-    return avatar3dModule;
-  }
+  var portraitModule = null;
   function loadPortrait() {
     if (!portraitModule) {
       portraitModule = import(new URL('js/portrait.js', document.baseURI).href);
@@ -244,6 +237,7 @@
     function frame(now) {
       if (stop || !use2D) return;
       var target = getLevel ? getLevel() : 0;
+      if (target && typeof target === 'object') target = target.open || 0;
       mouth += (target - mouth) * 0.45;
       var blink = 0;
       if (now > blinkAt) {
@@ -260,27 +254,15 @@
       stopGL = null; use2D = true; requestAnimationFrame(frame);
       if (opts.on3DError) opts.on3DError(err);
     }
-    var want3D = opts.mode === '3d' || !(face && face.portrait);
-    if (face && face.kind === 'mesh' && !want3D) {
+    if (face && face.kind === 'mesh' && face.portrait) {
       loadPortrait().then(function (m) {
         if (stop || !m.has(face) || !m.supported()) return;
         use2D = false;
         stopGL = m.attach(canvas, face, getLevel, { frame: opts.frame, onReady: opts.onReady, onError: fallback });
       }).catch(function (err) { if (opts.on3DError) opts.on3DError(err); });
-    } else if (face && face.kind === 'mesh' && face.depth) {
-      load3D().then(function (m) {
-        if (stop || !m.has3D(face) || !m.supported()) return;
-        use2D = false;
-        stopGL = m.attach(canvas, face, getLevel, {
-          interactive: opts.interactive,
-          frame: opts.frame,
-          onReady: function (info) { info.kind = '3d'; if (opts.onReady) opts.onReady(info); },
-          onError: fallback
-        });
-      }).catch(function (err) { if (opts.on3DError) opts.on3DError(err); });
     }
     return function () { stop = true; if (stopGL) stopGL(); };
   }
 
-  global.ZoopeAvatar = { scanFace: scanFace, draw: drawAvatar, animate: animate, load3D: load3D, loadPortrait: loadPortrait };
+  global.ZoopeAvatar = { scanFace: scanFace, draw: drawAvatar, animate: animate, loadPortrait: loadPortrait };
 })(window);

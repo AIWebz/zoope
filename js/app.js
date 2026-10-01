@@ -280,37 +280,18 @@
     $('startCam').disabled = on;
   }
 
-  var avatarMode = 'live';
   function refreshAvatarBox() {
     if (stopPreview) stopPreview();
     stopPreview = null;
-    var mesh = state.face && state.face.kind === 'mesh', depth = mesh && !!state.face.depth, live = mesh && !!state.face.portrait;
-    var mode = live && avatarMode === 'live' ? 'live' : '3d';
-    $('avatarMode').classList.toggle('hidden', !(live && depth));
-    $('avatarInfo').textContent = !state.face ? 'None yet' : mode === 'live' ? 'Building live portrait…' : depth ? 'Building 3D model…' : mesh ? 'Photo only (rescan for 3D)' : 'Illustrated';
+    var live = state.face && state.face.kind === 'mesh' && !!state.face.portrait;
+    $('avatarInfo').textContent = !state.face ? 'None yet' : live ? 'Building live avatar…' : state.face.kind === 'mesh' ? 'Rescan for the live avatar' : 'Illustrated';
     $('avatarMeasured').textContent = '–';
-    $('downloadModel').disabled = true;
-    $('dragHint').classList.add('hidden');
     if (state.face) {
       stopPreview = ZoopeAvatar.animate($('avatarCanvas'), state.face, function () { return previewLevel; }, {
-        mode: mode,
-        interactive: true,
         frame: 'head',
         onReady: function (info) {
-          if (info.kind === 'portrait') {
-            $('avatarInfo').textContent = 'Live portrait · ' + info.width + '×' + info.height;
-            $('avatarMeasured').textContent = info.vertices + ' points';
-            $('downloadModel').disabled = !depth;
-            return;
-          }
-          $('avatarInfo').textContent = '3D from ' + info.views.length + ' of 4 views';
-          var m = info.measured, parts = [];
-          if (m.crownY != null) parts.push('crown');
-          if (m.width != null) parts.push('width');
-          if (m.depth != null) parts.push('depth');
-          $('avatarMeasured').textContent = parts.length ? 'Head ' + parts.join(', ') : 'Not yet';
-          $('downloadModel').disabled = false;
-          $('dragHint').classList.remove('hidden');
+          $('avatarInfo').textContent = 'Live · ' + info.width + '×' + info.height;
+          $('avatarMeasured').textContent = info.vertices + ' points';
         },
         on3DError: function () { $('avatarInfo').textContent = '2D (WebGL unavailable)'; }
       });
@@ -320,49 +301,38 @@
     $('testVoice').disabled = !state.face;
     renderScanSteps();
   }
-  document.querySelectorAll('input[name=avatarMode]').forEach(function (r) {
-    r.addEventListener('change', function () { if (r.checked) { avatarMode = r.value; refreshAvatarBox(); } });
-  });
 
   /* ------------------------------ head scan steps ------------------------------ */
   var SCAN_STEPS = [
-    { key: 'front', title: 'Step 1 · Face & hair', button: 'Capture front', countdown: 3,
-      text: 'Face the camera with your whole head and hair in view, in good light. Keep a neutral expression.' },
-    { key: 'right', title: 'Step 2 · Right side', button: 'Capture right side', countdown: 5,
-      text: 'Turn your head about 90° to your left, so the camera sees the right side of your head and your right ear. Keep your whole head in the frame. zoope beeps each second and captures on the last beep.' },
-    { key: 'left', title: 'Step 3 · Left side', button: 'Capture left side', countdown: 5,
-      text: 'Turn your head about 90° to your right, so the camera sees the left side of your head and your left ear. Keep your whole head in the frame.' },
-    { key: 'back', title: 'Step 4 · Back of head', button: 'Capture back', countdown: 6,
-      text: 'Turn around so the camera sees the back of your head, at about the same distance. Listen for the beeps; zoope captures on the last one.' }
+    { key: 'front', title: 'Face & hair', button: 'Capture', countdown: 3,
+      text: 'Face the camera with your head, hair and shoulders in view, in good light. Keep a neutral expression with your mouth closed.' }
   ];
   var scanStep = 0, scanning = false;
 
   function stepDone(i) {
     var f = state.face;
-    if (!f || !f.depth) return false;
-    if (i === 0) return true;
-    return !!(f.views && f.views[SCAN_STEPS[i].key]);
+    return !!(f && f.portrait && i === 0);
   }
-  function scanCount() { var n = 0; for (var i = 0; i < 4; i++) if (stepDone(i)) n++; return n; }
-  function firstMissing() { for (var i = 0; i < 4; i++) if (!stepDone(i)) return i; return -1; }
+  function scanCount() { var n = 0; for (var i = 0; i < SCAN_STEPS.length; i++) if (stepDone(i)) n++; return n; }
+  function firstMissing() { for (var i = 0; i < SCAN_STEPS.length; i++) if (!stepDone(i)) return i; return -1; }
 
   function renderScanSteps() {
     var f = state.face;
     document.querySelectorAll('#scanSteps li').forEach(function (li, i) {
       li.classList.toggle('done', stepDone(i));
       li.classList.toggle('current', i === scanStep);
-      var photo = i === 0 ? (f && f.depth && f.photo) : (f && f.views && f.views[SCAN_STEPS[i].key] && f.views[SCAN_STEPS[i].key].photo);
+      var photo = f && f.portrait && f.photo;
       li.querySelector('.ss-thumb').style.backgroundImage = photo ? 'url(' + photo + ')' : '';
-      li.querySelector('em').textContent = stepDone(i) ? 'Captured' : ['Front', 'Turn left', 'Turn right', 'Turn around'][i];
+      li.querySelector('em').textContent = stepDone(i) ? 'Captured' : 'Front';
     });
     var st = SCAN_STEPS[scanStep];
     $('scanTitle').textContent = st.title;
     $('scanInstruction').textContent = st.text;
-    $('scanFace').querySelector('span').textContent = stepDone(scanStep) ? 'Retake ' + st.button.replace('Capture ', '') : st.button;
+    $('scanFace').querySelector('span').textContent = stepDone(scanStep) ? 'Rescan' : st.button;
     $('scanGuide').dataset.step = scanStep;
     var n = scanCount();
-    $('faceBadge').textContent = n + ' / 4 captured';
-    $('faceBadge').className = 'pill ' + (n === 4 ? 'pill-green pill-dot' : n ? 'pill-accent' : '');
+    $('faceBadge').textContent = n ? 'Captured' : 'Not scanned';
+    $('faceBadge').className = 'pill ' + (n ? 'pill-green pill-dot' : '');
   }
 
   document.querySelectorAll('#scanSteps li').forEach(function (li, i) {
@@ -399,20 +369,6 @@
       })();
     });
   }
-
-  $('downloadModel').addEventListener('click', function () {
-    if (!state.face) return;
-    $('downloadModel').disabled = true;
-    ZoopeAvatar.load3D().then(function (m) { return m.exportGLB(state.face); }).then(function (blob) {
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'zoope-avatar.glb';
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
-      toast('3D model exported (' + Math.round(blob.size / 1024) + ' KB)');
-    }).catch(function (err) { toast('Export failed: ' + err.message, 'error'); })
-      .then(function () { $('downloadModel').disabled = false; });
-  });
 
   $('startCam').addEventListener('click', function () {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -455,24 +411,14 @@
     }).then(function () {
       line.classList.add('on');
       $('scanStatus').textContent = 'Scanning…';
-      return step === 0 ? ZoopeHeadScan.captureFront(cam) : ZoopeHeadScan.captureView(cam, st.key);
+      return ZoopeHeadScan.captureFront(cam);
     }).then(function (res) {
       if (!res.ok) { beep(220, 300); $('scanStatus').textContent = res.reason; return; }
-      if (step === 0) {
-        // a new front scan keeps the side and back captures already taken
-        res.face.views = (state.face && state.face.views) || {};
-        state.face = res.face;
-      } else {
-        state.face.views = state.face.views || {};
-        state.face.views[st.key] = res.view;
-      }
+      state.face = res.face;
       save();
-      var next = firstMissing();
-      scanStep = next < 0 ? step : next;
       refreshAvatarBox();
-      $('scanStatus').textContent = next < 0 ? 'All four views captured. Your 3D model is built from them. Drag the preview to turn it all the way around.'
-        : 'Captured. Next: ' + SCAN_STEPS[next].title.replace(/^Step \d · /, '').toLowerCase() + '.';
-      toast(st.title.replace(/^Step \d · /, '') + ' captured');
+      $('scanStatus').textContent = 'Captured. Your live avatar is ready. It moves, blinks and speaks with your face.';
+      toast('Face captured');
     }).catch(function () {
       // the scanning models couldn't load: fall back to an illustrated avatar, and say so
       state.face = ZoopeAvatar.scanFace(cam);
@@ -535,12 +481,18 @@
     });
   }
 
+  // Phones give a browser tab far less memory than the voice model needs (~1 GB while it
+  // loads), and reset the tab instead of reporting an error, so the model never runs there.
+  var IS_PHONE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
+  var PHONE_VOICE_MSG = 'Making your voice needs a computer. The voice model needs about 1 GB of memory, more than phone browsers give a tab, so the phone resets the page. Your voice scan is saved; open zoope on a computer to make your voice. On this phone, zoope uses the browser voice tuned to your pitch and pace, which is not your voice.';
   function renderVoice(msg) {
     var badge = $('neuralBadge');
     var labels = { none: voiceSample ? 'Scanned' : 'Not scanned', loading: 'Making your voice…', ready: 'Your voice is ready', error: 'Browser voice (fallback)' };
     badge.textContent = labels[neuralState];
     badge.className = 'pill ' + (neuralState === 'ready' ? 'pill-green pill-dot' : neuralState === 'error' ? 'pill-amber' : voiceSample ? 'pill-accent' : '');
-    $('buildNeural').disabled = !voiceSample || neuralState === 'loading';
+    $('buildNeural').disabled = !voiceSample || neuralState === 'loading' || IS_PHONE;
+    $('testNeural').classList.toggle('hidden', false);
+    if (IS_PHONE && voiceSample && neuralState !== 'ready' && !msg) msg = PHONE_VOICE_MSG;
     $('testNeural').disabled = neuralState !== 'ready' && neuralState !== 'error';
     $('testNeural').lastChild.textContent = neuralState === 'error' ? 'Hear fallback voice' : 'Hear my voice';
     $('playSample').disabled = !voiceSample;
@@ -621,7 +573,7 @@
       save();
       renderProfile();
       $('scanVoiceStatus').textContent = 'Voice scanned: ' + profile.voicedSeconds + ' seconds of clear speech measured.';
-      renderVoice('Next, make your voice from this recording.');
+      renderVoice(IS_PHONE ? PHONE_VOICE_MSG : 'Next, make your voice from this recording.');
       toast('Voice scanned');
     }).catch(function (err) { toast(err.message, 'error'); })
       .then(function () { btn.disabled = !stream; label.textContent = voiceSample ? 'Scan again (15s)' : 'Scan my voice (15s)'; });
@@ -640,13 +592,17 @@
   // Step 2: make the voice from the recording. quiet: no toasts (used to restore it on later visits).
   // The voice model needs about 1 GB of memory while it loads; phones often close the tab
   // instead of failing cleanly. A flag set during the build tells the next visit it crashed.
-  var IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
-  var LOW_MEMORY = IS_MOBILE || (navigator.deviceMemory && navigator.deviceMemory < 4);
+  var LOW_MEMORY = IS_PHONE || (navigator.deviceMemory && navigator.deviceMemory < 4);
   function neuralCrashed() { try { return localStorage.getItem('zoope-neural-building') === '1'; } catch (e) { return false; } }
   function markBuilding(on) { try { if (on) localStorage.setItem('zoope-neural-building', '1'); else localStorage.removeItem('zoope-neural-building'); } catch (e) { /* ignore */ } }
 
   function buildNeural(quiet) {
     if (!voiceSample || neuralState === 'loading') return Promise.resolve(false);
+    if (IS_PHONE) {
+      neuralState = 'error';
+      renderVoice(PHONE_VOICE_MSG);
+      return Promise.resolve(false);
+    }
     if (!quiet && LOW_MEMORY && !window.confirm('Making your voice downloads a 216 MB model and needs about 1 GB of free memory. On a phone it can close this tab. It works best on a computer. Continue?')) {
       return Promise.resolve(false);
     }
@@ -699,7 +655,7 @@
       { label: 'Link a meeting account', done: Object.keys(state.platforms).length > 0, route: 'setup' },
       { label: 'Add your names', done: state.profile.names.length > 0 && state.chatStep === 'done', route: 'setup' },
       { label: 'Send zoope a note', done: (state.profile.notes || []).length > 0, route: 'notes' },
-      { label: 'Scan your head (4 views)', done: typeof SCAN_STEPS !== 'undefined' && scanCount() === 4, route: 'clone' },
+      { label: 'Scan your face', done: typeof SCAN_STEPS !== 'undefined' && scanCount() === SCAN_STEPS.length, route: 'clone' },
       { label: 'Make your voice', done: !!state.neuralReady, route: 'clone' },
       { label: 'Confirm a meeting', done: state.meetings.some(function (m) { return m.confirmed; }), route: 'meetings' }
     ];
@@ -838,7 +794,7 @@
     var out = [];
     if (!state.profile.names.length) out.push('add your names');
     if (!state.face) out.push('scan your head');
-    else if (scanCount() < 4) out.push('finish the head scan (' + scanCount() + ' of 4 views)');
+    else if (!state.face.portrait) out.push('rescan your face for the live avatar');
     if (!state.neuralReady) out.push(state.voice ? 'make your voice (it will use the browser voice)' : 'scan your voice');
     return out;
   }
@@ -1345,7 +1301,7 @@
   renderMeetings();
   renderProfile();
   if (voiceSample) $('scanVoiceStatus').textContent = 'Voice scanned. You can scan again at any time.';
-  renderVoice(voiceSample ? (state.neuralReady ? 'Loading your voice…' : 'Next, make your voice from this recording.') : null);
+  renderVoice(voiceSample ? (IS_PHONE ? PHONE_VOICE_MSG : state.neuralReady ? 'Loading your voice…' : 'Next, make your voice from this recording.') : null);
   // the model was downloaded before: rebuild the voice in the background
   // reload the voice in the background, except on phones (too heavy to do unasked) or after a crash
   if (neuralCrashed()) {

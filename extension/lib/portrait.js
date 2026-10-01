@@ -191,7 +191,8 @@ async function build(P) {
   const out = {
     img, W, H, pts, tris, z, headW, jawW, bodyW, n, N, faceH, faceW, faceCx, chin, top: headTop, eyes,
     pivot: [faceCx, (lm[234][1] + lm[454][1]) / 2, hrz * 0.35],
-    mouthOpenInPhoto: lm[14][1] - lm[13][1] > faceH * 0.02
+    mouthOpenInPhoto: lm[14][1] - lm[13][1] > faceH * 0.02,
+    mouthC: [(lm[61][0] + lm[291][0]) / 2, (lm[13][1] + lm[14][1]) / 2], mouthW: Math.abs(lm[291][0] - lm[61][0])
   };
   cache.set(key, out);
   return out;
@@ -312,21 +313,33 @@ export function attach(canvas, face, getLevel, opts = {}) {
     resize();
 
     // animation state
-    let mouth = 0, wide = 0, blinkAt = performance.now() + 1600, nextSacc = 0, gaze = [0, 0], gazeT = [0, 0];
+    let mouth = 0, wide = 0, wideS = 0, roundS = 0, teethS = 0, blinkAt = performance.now() + 1600, nextSacc = 0, gaze = [0, 0], gazeT = [0, 0];
     let nod = 0, nodV = 0, lastLevel = 0, talkT = 0;
     const cur = new Float32Array(M.N * 2);
     const [px, py, pz] = M.pivot;
 
     // 2D deformation (jaw, lips, lids, eyes) in photo space, then head rotation with depth
-    const deform = (open, blink, now) => {
+    const UPPER_SET = new Set(UPPER_LIP);
+    const deform = (open, blink) => {
       const drop = M.faceH * 0.055 * open;
-      const pinch = M.faceW * 0.012 * open * (1 - wide);
+      const [mcx, mcy] = M.mouthC, mw = M.mouthW;
+      // lips: spread for "ee", pulled in and pushed out for "oo", upper lip lifted off the teeth for "f"/"s"
+      const sx = 0.17 * wideS - 0.32 * roundS;
       for (let i = 0; i < M.N; i++) {
         let x = M.pts[i][0], y = M.pts[i][1];
         const jw = M.jawW[i];
-        if (jw) {
-          y += drop * jw;
-          if (i === 61 || i === 78) x += pinch; else if (i === 291 || i === 308) x -= pinch;
+        if (jw) y += drop * jw;
+        if (i < M.n) {
+          const dx = (x - mcx) / (mw * 1.15), dy = (y - mcy) / (mw * 0.85), d = Math.sqrt(dx * dx + dy * dy);
+          if (d < 1) {
+            const f = 1 - smooth(0.35, 1, d);
+            x = mcx + (x - mcx) * (1 + sx * f);
+            // corners rise a little with a spread, and the lips purse vertically when rounded
+            const corner = Math.abs(x - mcx) / (mw * 0.5);
+            y -= M.faceH * 0.012 * wideS * f * corner * corner;
+            y += (y - mcy) * 0.25 * roundS * f * (1 - corner * 0.6);
+            if (UPPER_SET.has(i)) y -= M.faceH * 0.012 * teethS * f;
+          }
         }
         cur[i * 2] = x; cur[i * 2 + 1] = y;
       }
@@ -343,9 +356,15 @@ export function attach(canvas, face, getLevel, opts = {}) {
     const frame = (now) => {
       if (stopped) return;
       const s = now / 1000;
-      const level = Math.min(1, getLevel ? getLevel() : 0);
-      // jaw follows the voice level, opening fast and closing a little slower
-      mouth += (level - mouth) * (level > mouth ? 0.5 : 0.32);
+      // the voice gives a mouth shape ({ open, wide, round, teeth }) or just a level
+      const raw = getLevel ? getLevel() : 0;
+      const sh = raw && typeof raw === 'object' ? raw : { open: raw || 0, wide: wide * 0.4, round: 0, teeth: 0 };
+      const level = Math.min(1, Math.max(sh.open || 0, (sh.teeth || 0) * 0.22));
+      // jaw follows the sound, opening fast and closing a little slower; lips move a bit slower than the jaw
+      mouth += (level - mouth) * (level > mouth ? 0.55 : 0.38);
+      wideS += ((sh.wide || 0) - wideS) * 0.35;
+      roundS += ((sh.round || 0) - roundS) * 0.35;
+      teethS += ((sh.teeth || 0) - teethS) * 0.45;
       if (level > 0.25 && lastLevel <= 0.25) { wide = Math.random(); nodV -= 0.006 + Math.random() * 0.008; talkT = s; }
       lastLevel = level;
       // blinks, a little more often while talking
@@ -364,7 +383,7 @@ export function attach(canvas, face, getLevel, opts = {}) {
       // emphasis nods: a damped spring kicked at the start of phrases
       nodV += -nod * 0.02 - nodV * 0.12; nod += nodV;
 
-      deform(mouth, blink, now);
+      deform(mouth, blink);
       const yaw = Math.sin(s * 0.41) * 0.045 + Math.sin(s * 0.93 + 1.3) * 0.018;
       const pitch = Math.sin(s * 0.33 + 0.7) * 0.022 + nod - mouth * 0.012;
       const roll = Math.sin(s * 0.27 + 2.1) * 0.018;

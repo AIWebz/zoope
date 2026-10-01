@@ -158,33 +158,130 @@
     return { pitch: +pitch.toFixed(2), rate: +rate.toFixed(2) };
   }
 
-  /* Speaks text with the user's tuned voice. onLevel(0..1) drives lip sync. */
+  /* ------------------------------ visemes ------------------------------ */
+  // Mouth shapes: open (jaw), wide (lips spread, as in "ee"), round (lips rounded, as in "oo"),
+  // teeth (lower lip to the teeth or teeth together, as in "f", "s").
+  var SHAPES = {
+    a: { open: 0.85, wide: 0.25 }, e: { open: 0.45, wide: 0.8 }, i: { open: 0.3, wide: 1 },
+    o: { open: 0.6, round: 0.85 }, u: { open: 0.25, round: 1 }, w: { open: 0.15, round: 1 },
+    m: { open: 0 }, f: { open: 0.08, teeth: 1 }, s: { open: 0.15, wide: 0.4, teeth: 0.8 },
+    sh: { open: 0.2, round: 0.6, teeth: 0.7 }, th: { open: 0.22, teeth: 0.6 }, l: { open: 0.35, wide: 0.2 },
+    r: { open: 0.3, round: 0.4 }, k: { open: 0.4 }, rest: { open: 0 }
+  };
+  var LETTER = { a: 'a', e: 'e', i: 'i', y: 'i', o: 'o', u: 'u', w: 'w', m: 'm', b: 'm', p: 'm', f: 'f', v: 'f',
+    s: 's', z: 's', c: 's', x: 's', t: 's', d: 's', n: 's', j: 'sh', l: 'l', r: 'r', k: 'k', g: 'k', q: 'w', h: 'k' };
+  var DIGRAPH = { oo: 'u', ee: 'i', ea: 'i', th: 'th', sh: 'sh', ch: 'sh', ph: 'f', wh: 'w', ou: 'o', ow: 'o', ai: 'e', ay: 'e', ng: 'k', ck: 'k', qu: 'w' };
+  var VOWEL = { a: 1, e: 1, i: 1, o: 1, u: 1, w: 0 };
+
+  /* The mouth shapes a word is sounded out with, each with a relative duration. */
+  function wordVisemes(word) {
+    var w = String(word).toLowerCase().replace(/[^a-z]/g, ''), out = [];
+    if (w.length > 3 && /[^aeiou]e$/.test(w)) w = w.slice(0, -1); // silent final e
+    for (var i = 0; i < w.length; i++) {
+      var two = w.substr(i, 2), key = DIGRAPH[two];
+      if (key) i++; else key = LETTER[w[i]];
+      if (!key) continue;
+      if (out.length && out[out.length - 1].key === key) { out[out.length - 1].dur += 0.5; continue; }
+      out.push({ key: key, dur: VOWEL[key] ? 1.6 : key === 'm' || key === 'f' ? 1.1 : 0.8 });
+    }
+    return out;
+  }
+  function shape(key, k) {
+    var s = SHAPES[key] || SHAPES.rest;
+    k = k == null ? 1 : k;
+    return { open: (s.open || 0) * k, wide: s.wide || 0, round: s.round || 0, teeth: s.teeth || 0 };
+  }
+
+  /*
+   * Mouth shape from a stretch of audio: loudness opens the jaw, hiss (many zero
+   * crossings) shows the teeth, and where the energy sits in the spectrum tells
+   * rounded vowels (energy low, "oo", "oh") from spread ones (energy high, "ee").
+   */
+  function shapeOf(x, rate, from, to) {
+    from = from || 0; to = to || x.length;
+    var n = to - from;
+    if (n < 16) return shape('rest');
+    var a = Math.exp(-2 * Math.PI * 900 / rate), lp = 0, e = 0, el = 0, zc = 0, prev = x[from];
+    for (var i = from; i < to; i++) {
+      var v = x[i];
+      e += v * v;
+      if ((v >= 0) !== (prev >= 0)) zc++;
+      prev = v;
+      lp = (1 - a) * v + a * lp;
+      el += lp * lp;
+    }
+    var loud = Math.min(1, Math.sqrt(e / n) * 5);
+    if (loud < 0.03) return shape('rest');
+    var zcrHz = zc / n * rate / 2, low = el / (e || 1);
+    var sm = function (a0, a1, v2) { var t = Math.max(0, Math.min(1, (v2 - a0) / (a1 - a0))); return t * t * (3 - 2 * t); };
+    var fric = sm(1800, 3800, zcrHz);
+    var round = sm(0.8, 0.95, low) * (1 - fric), wide = (1 - sm(0.45, 0.72, low)) * (1 - fric);
+    return {
+      open: Math.min(1, loud * 1.4) * (1 - 0.75 * fric) * (1 - 0.3 * round),
+      wide: wide, round: round, teeth: fric * Math.min(1, loud * 4)
+    };
+  }
+  function r2(v) { return Math.round(v * 100) / 100; }
+  /* Shapes every `step` ms of a chunk of samples (for streaming to a remote avatar). */
+  function shapeTrack(samples, rate, step) {
+    var n = Math.max(1, Math.round(rate * step / 1000)), out = [];
+    for (var i = 0; i < samples.length; i += n) {
+      var sh = shapeOf(samples, rate, i, Math.min(samples.length, i + n));
+      out.push([r2(sh.open), r2(sh.wide), r2(sh.round), r2(sh.teeth)]);
+    }
+    return out;
+  }
+
+  /*
+   * Speaks text with the user's tuned voice. onLevel(shape) drives lip sync with
+   * the mouth shapes of the words being said: each word boundary from the
+   * speech engine starts that word's visemes.
+   */
   function speak(text, profile, onLevel) {
     return new Promise(function (resolve) {
+      var p = synthParams(profile), msPer = 85 / (p.rate || 1);
+      // queue of { shape, until } for the word being spoken
+      var queue = [], talking = true;
+      function sayWord(word) {
+        var vs = wordVisemes(word), total = 0;
+        vs.forEach(function (v) { total += v.dur; });
+        var t = performance.now(), unit = Math.max(1, word.length) * msPer / (total || 1);
+        queue = vs.map(function (v) { t += v.dur * unit; return { s: shape(v.key, 0.85 + Math.random() * 0.25), until: t }; });
+        queue.push({ s: shape('rest'), until: t + 60 });
+      }
+      function loop() {
+        if (!talking) { if (onLevel) onLevel(shape('rest')); return; }
+        var now = performance.now();
+        while (queue.length > 1 && queue[0].until < now) queue.shift();
+        if (onLevel) onLevel(queue.length ? queue[0].s : shape('rest'));
+        requestAnimationFrame(loop);
+      }
+      var words = text.match(/\S+/g) || [], wi = 0, sawBoundary = false, fallbackTimer = null;
+      // without boundary events, step through the words at the estimated pace
+      function walk() {
+        if (!talking || sawBoundary || wi >= words.length) return;
+        var w = words[wi++];
+        sayWord(w);
+        fallbackTimer = setTimeout(walk, Math.max(1, w.length) * msPer + 90);
+      }
       if (!global.speechSynthesis) {
-        // no TTS: fake a mouth movement for the reading time
-        var t0 = performance.now(), dur = Math.max(1200, text.length * 55);
-        (function loop() {
-          var t = performance.now() - t0;
-          if (onLevel) onLevel(t < dur ? 0.3 + 0.5 * Math.abs(Math.sin(t / 90)) : 0);
-          if (t < dur) requestAnimationFrame(loop); else resolve();
-        })();
+        walk(); loop();
+        setTimeout(function () { talking = false; resolve(); }, words.join(' ').length * msPer + 600);
         return;
       }
       var u = new SpeechSynthesisUtterance(text);
-      var p = synthParams(profile);
       u.pitch = p.pitch; u.rate = p.rate;
       var v = pickVoice(profile);
       if (v) u.voice = v;
-      var talking = true, pulse = 0;
-      u.onboundary = function () { pulse = 1; };
-      (function loop() {
-        if (!talking) { if (onLevel) onLevel(0); return; }
-        pulse *= 0.85;
-        if (onLevel) onLevel(0.25 + 0.55 * Math.max(pulse, Math.abs(Math.sin(performance.now() / 85)) * 0.7));
-        requestAnimationFrame(loop);
-      })();
-      var done = function () { talking = false; resolve(); };
+      u.onstart = function () { setTimeout(function () { if (!sawBoundary) walk(); }, 250); };
+      u.onboundary = function (e) {
+        if (e.name && e.name !== 'word') return;
+        sawBoundary = true; clearTimeout(fallbackTimer);
+        var rest = text.slice(e.charIndex), m = rest.match(/^\S+/);
+        if (m) sayWord(m[0]);
+      };
+      loop();
+      var done = function () { talking = false; clearTimeout(fallbackTimer); resolve(); };
       u.onend = done; u.onerror = done;
       speechSynthesis.cancel();
       speechSynthesis.speak(u);
@@ -214,5 +311,5 @@
 
   if (global.speechSynthesis) speechSynthesis.getVoices(); // warm up voice list
 
-  global.ZoopeVoice = { analyzeSamples: analyzeSamples, encodePCM: encodePCM, decodePCM: decodePCM, speak: speak, listen: listen, synthParams: synthParams };
+  global.ZoopeVoice = { shapeOf: shapeOf, shapeTrack: shapeTrack, wordVisemes: wordVisemes, analyzeSamples: analyzeSamples, encodePCM: encodePCM, decodePCM: decodePCM, speak: speak, listen: listen, synthParams: synthParams };
 })(window);
