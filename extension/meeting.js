@@ -31,7 +31,7 @@
   });
 
   // ---- the avatar, drawn into a canvas the page turns into its camera
-  const LAG = 90; // ms of WebRTC delay on the voice
+  const LAG = 40; // ms: WebRTC delay on the voice, minus the lips' natural lead
   let envelopes = [];
   const REST = { open: 0, wide: 0, round: 0, teeth: 0 };
   function mouthLevel() {

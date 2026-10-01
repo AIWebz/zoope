@@ -50,6 +50,12 @@ If you host zoope somewhere other than localhost, `*.github.io`, `*.pages.dev`, 
 
 zoope speaks in the first person as you ("Hi, I'm Alex"). It will not lie about what it is: if someone sincerely asks whether it's a bot or an AI, it says it's your AI avatar speaking from your notes. It shares facts only from your notes, and only when a note clearly matches the question. It never agrees, commits or gives an opinion on your behalf. When it doesn't know something, it says so and passes the question on to you.
 
+### The AI engine (`js/brain.js`, `js/brainworker.js`)
+
+zoope runs a language model in your browser: Qwen2.5 0.5B Instruct (4-bit) through transformers.js, on WebGPU when available, otherwise WebAssembly. Its weights (~400 MB) download once from Hugging Face (or hf-mirror.com) when you first start a meeting, and are cached. There are no API calls. The rule engine decides *when* to speak; the model writes *what* to say, as you, from your notes and the conversation. It may only state facts from your notes. If they don't cover a question, it says so. Any reply that mentions a number or name not found in your notes or the conversation is discarded. If the model is slower than 2.5 s in a call, the rule engine's reply is used instead, so answers never lag.
+
+**Pings:** when zoope can't answer a question meant for you (by name, one-on-one, or right after it spoke), it pings you: a desktop notification, two beeps and a highlighted line saying who asked what. Type an answer in the note box and zoope says it at the next pause. Pings are spaced at least 90 seconds apart, and small talk or questions for others never ping. Everything unanswered is listed in the summary.
+
 ### When zoope speaks (`js/engine.js`)
 
 - **Just your name** ("Alex?", "Hey Alex") gets "Yes?". If the same person keeps talking, their next line is treated as meant for you and answered.

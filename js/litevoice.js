@@ -173,30 +173,27 @@ export async function speak(text, v, onLevel, out) {
   const AC = window.AudioContext || window.webkitAudioContext;
   const ac = out ? out.context : new AC();
   await ac.resume();
-  const analyser = ac.createAnalyser();
-  analyser.fftSize = 512;
-  analyser.connect(out ? out.destination : ac.destination);
-  const td = new Float32Array(analyser.fftSize);
-  let playing = true;
-  (function meter() {
-    if (!playing) return;
-    analyser.getFloatTimeDomainData(td);
-    if (onLevel) onLevel(window.ZoopeVoice.shapeOf(td, ac.sampleRate));
-    requestAnimationFrame(meter);
-  })();
   // the whole reply in one pass, so it flows without gaps between sentences
   const { samples, rate } = await render(text, v);
   const buf = ac.createBuffer(1, samples.length, rate);
   buf.getChannelData(0).set(samples);
   const last = ac.createBufferSource();
   last.buffer = buf;
-  last.connect(analyser);
+  last.connect(out ? out.destination : ac.destination);
   const startAt = ac.currentTime + 0.03;
-  if (out && out.onEnvelope) out.onEnvelope({ at: Date.now() + 30, step: 20, shapes: window.ZoopeVoice.shapeTrack(samples, rate, 20) });
+  const shapes = window.ZoopeVoice.shapeTrack(samples, rate, 20);
+  if (out && out.onEnvelope) out.onEnvelope({ at: Date.now() + 30, step: 20, shapes });
+  // lips lead the sound by ~50 ms, as in real speech
+  let playing = true;
+  (function tick() {
+    if (!playing) return;
+    const i = Math.floor((ac.currentTime + 0.05 - startAt) / 0.02), v = i >= 0 && i < shapes.length ? shapes[i] : null;
+    if (onLevel) onLevel(v ? { open: v[0], wide: v[1], round: v[2], teeth: v[3] } : { open: 0, wide: 0, round: 0, teeth: 0 });
+    requestAnimationFrame(tick);
+  })();
   last.start(startAt);
   await new Promise((resolve) => { last.onended = resolve; });
   playing = false;
-  analyser.disconnect();
   if (onLevel) onLevel({ open: 0, wide: 0, round: 0, teeth: 0 });
   if (!out) ac.close();
 }

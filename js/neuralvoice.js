@@ -149,59 +149,94 @@ export async function restore(onProgress) {
  * the voice into a stream (a real meeting) instead of the speakers; the mouth
  * envelope is reported with wall-clock times so a remote avatar can follow it.
  */
+// Short replies made ahead of time (when the voice is ready), so "Yes?" and friends play instantly.
+const phraseCache = new Map();
+export async function prewarm(phrases) {
+  if (!ready()) return;
+  for (const p of phrases) {
+    if (phraseCache.has(p)) continue;
+    const parts = [];
+    for await (const f of engine.speak(p, new Float32Array(1), { temperature: TEMP })) parts.push(f);
+    const n = parts.reduce((a, f) => a + f.length, 0), all = new Float32Array(n);
+    let o = 0; for (const f of parts) { all.set(f, o); o += f.length; }
+    phraseCache.set(p, all);
+  }
+}
+// a little variation in delivery sounds human; too much wanders off the voice
+const TEMP = 0.5;
+
+/*
+ * Mouth timing like a real speaker: lips start moving ~50 ms before the sound,
+ * so the mouth follows a timeline of shapes made from the audio itself rather
+ * than reacting to what's already playing.
+ */
+function mouthTimeline(ac, onLevel) {
+  const segs = [];
+  let playing = true;
+  (function tick() {
+    if (!playing) return;
+    const t = ac.currentTime + 0.05;
+    let shape = null;
+    for (let i = segs.length - 1; i >= 0; i--) {
+      const s = segs[i];
+      if (t >= s.at && t < s.at + s.shapes.length * 0.02) { const v = s.shapes[Math.floor((t - s.at) / 0.02)]; shape = { open: v[0], wide: v[1], round: v[2], teeth: v[3] }; break; }
+    }
+    if (onLevel) onLevel(shape || { open: 0, wide: 0, round: 0, teeth: 0 });
+    requestAnimationFrame(tick);
+  })();
+  return {
+    add(samples, rate, at) { segs.push({ at, shapes: window.ZoopeVoice.shapeTrack(samples, rate, 20) }); if (segs.length > 400) segs.splice(0, 200); },
+    stop() { playing = false; if (onLevel) onLevel({ open: 0, wide: 0, round: 0, teeth: 0 }); }
+  };
+}
+
+/*
+ * Speaks text in the cloned voice, streaming frames to the speakers as they are
+ * generated. onLevel(shape) drives the avatar's mouth.
+ * out (optional): { context, destination, onEnvelope({ at, step, shapes }) } sends
+ * the voice into a stream (a real meeting) instead of the speakers; the mouth
+ * shapes are reported with wall-clock times so a remote avatar can follow them.
+ */
 export async function speak(text, onLevel, out) {
   if (!ready()) throw new Error('No cloned voice yet');
   const AC = window.AudioContext || window.webkitAudioContext;
   const ac = out ? out.context : new AC({ sampleRate: engine.sampleRate });
   await ac.resume();
-  const analyser = ac.createAnalyser();
-  analyser.fftSize = 512;
-  analyser.connect(out ? out.destination : ac.destination);
-  const td = new Float32Array(analyser.fftSize);
-  let playing = true, lastEnd = 0;
-  (function meter() {
-    if (!playing) return;
-    analyser.getFloatTimeDomainData(td);
-    // the mouth takes the shape of the sound being played (open, spread, rounded, teeth)
-    if (onLevel) onLevel(window.ZoopeVoice.shapeOf(td, ac.sampleRate));
-    requestAnimationFrame(meter);
-  })();
-
-  // Smooth playback: hold back the first half second of audio before starting, and if the
-  // model ever falls behind, wait for another half second instead of playing in fragments.
-  const LEAD = 0.5;
-  let cursor = 0, pending = [], pendingDur = 0, started = false;
-  const flush = () => {
-    if (!pending.length) return;
-    if (!started || cursor < ac.currentTime + 0.02) cursor = ac.currentTime + 0.05;
+  const dest = out ? out.destination : ac.destination;
+  const mouth = mouthTimeline(ac, onLevel);
+  let cursor = 0, started = false, lastEnd = 0;
+  const play = (frames) => {
+    if (!started || cursor < ac.currentTime + 0.02) cursor = ac.currentTime + 0.04;
     started = true;
-    for (const frame of pending) {
+    for (const frame of frames) {
       const buf = ac.createBuffer(1, frame.length, engine.sampleRate);
       buf.getChannelData(0).set(frame);
       const src = ac.createBufferSource();
       src.buffer = buf;
-      src.connect(analyser);
+      src.connect(dest);
       src.start(cursor);
+      mouth.add(frame, engine.sampleRate, cursor);
       if (out && out.onEnvelope) out.onEnvelope(envelope(frame, engine.sampleRate, Date.now() + (cursor - ac.currentTime) * 1000));
       cursor += buf.duration;
     }
     lastEnd = cursor;
-    pending = []; pendingDur = 0;
   };
-  // the worker resolves a Float32Array voice to the most recent clone
-  for await (const frame of engine.speak(text, new Float32Array(1), { temperature: 0.2 })) {
-    pending.push(frame);
-    pendingDur += frame.length / engine.sampleRate;
-    const ahead = started ? cursor - ac.currentTime : 0;
-    // keep playing seamlessly while we're ahead; re-buffer only after an underrun
-    if (started && ahead > 0.08) flush();
-    else if (pendingDur >= LEAD) flush();
+  const cached = phraseCache.get(text);
+  if (cached) play([cached]);
+  else {
+    // start after a short buffer (0.2 s); if the model falls behind, re-buffer briefly instead of stuttering
+    const LEAD = 0.2;
+    let pending = [], pendingDur = 0;
+    for await (const frame of engine.speak(text, new Float32Array(1), { temperature: TEMP })) {
+      pending.push(frame);
+      pendingDur += frame.length / engine.sampleRate;
+      const ahead = started ? cursor - ac.currentTime : 0;
+      if ((started && ahead > 0.06) || pendingDur >= LEAD) { play(pending); pending = []; pendingDur = 0; }
+    }
+    if (pending.length) play(pending);
   }
-  flush();
-  await new Promise((resolve) => setTimeout(resolve, Math.max(0, (lastEnd - ac.currentTime) * 1000) + 60));
-  playing = false;
-  analyser.disconnect();
-  if (onLevel) onLevel({ open: 0, wide: 0, round: 0, teeth: 0 });
+  await new Promise((resolve) => setTimeout(resolve, Math.max(0, (lastEnd - ac.currentTime) * 1000) + 40));
+  mouth.stop();
   if (!out) ac.close();
 }
 

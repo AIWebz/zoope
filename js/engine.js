@@ -360,8 +360,17 @@
     return out;
   };
 
+  /* The AI engine wrote a better reply for this turn: record that one instead. */
+  ZoopeEngine.prototype.replaceLastReply = function (text, answered) {
+    for (var i = this.history.length - 1; i >= 0; i--) if (this.history[i].ai) { this.history[i].text = text; break; }
+    var d = this.decisions[this.decisions.length - 1];
+    if (d) d.reply = text;
+    // it answered after all: that question no longer waits on the user
+    if (answered && this.followUps.length && this.followUps[this.followUps.length - 1].turn === this.turn) this.followUps.pop();
+  };
+
   ZoopeEngine.prototype.followUp = function (speaker, t) {
-    this.followUps.push({ from: speaker, text: t });
+    this.followUps.push({ from: speaker, text: t, turn: this.turn });
     return 'follow up on that';
   };
 

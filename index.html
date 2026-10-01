@@ -555,6 +555,7 @@
               <span class="pill" id="roomPlatform">Zoom</span>
               <span class="mono muted-2" id="roomTimer">00:00</span>
               <span class="pill hidden" id="roomState"></span>
+              <span class="pill" id="brainState" title="zoope's AI engine, running in this browser">AI: off</span>
               <div class="room-actions">
                 <button type="button" class="btn btn-secondary btn-sm hidden" id="focusMeeting"><svg class="icon" aria-hidden="true"><use href="#i-external"/></svg>Meeting tab</button>
                 <button type="button" class="btn btn-secondary btn-sm" id="listenBtn"><svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg><span>Listen</span></button>
@@ -618,6 +619,7 @@
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <script src="js/engine.js"></script>
+  <script src="js/brain.js"></script>
   <script src="js/bridge.js"></script>
   <script src="js/summarize.js"></script>
   <script src="js/facemesh.js"></script>

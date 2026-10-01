@@ -1085,3 +1085,6 @@ html.phone body:not([data-route="home"]) .phone-gate {
 .phone-gate > div { max-width: 340px; display: grid; gap: 12px; justify-items: center; }
 .phone-gate b { font-size: 20px; color: var(--gray-950, #09090b); }
 .phone-gate p { font-size: 15px; line-height: 1.55; color: var(--gray-600, #52525b); }
+
+.line.ping { background: #fff7e6; border: 1px solid #f5c26b; border-radius: var(--r-md); padding: 10px 12px; }
+.line.ping .line-who { color: #b45309; }

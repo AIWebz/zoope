@@ -868,6 +868,8 @@
 
   function joinMeeting(m, opts) {
     opts = opts || {};
+    ZoopeBrain.load();
+    if (window.Notification && Notification.permission === 'default' && !m.demo) { try { Notification.requestPermission(); } catch (e) { /* ignore */ } }
     if (room) leaveRoom(false);
     m.joined = true; save();
     // a real meeting: the extension opens it in the platform's web app
@@ -967,6 +969,7 @@
     var name = profile.fullName || profile.preferred || profile.names[0];
     // get the voice ready before anyone speaks, so the first reply isn't slowed by loading
     if (liteReady() && neuralState !== 'ready') lite().then(function (m) { return m.warm(); }).catch(function () {});
+    if (neuralState === 'ready') neural().then(function (m) { return m.prewarm(['Yes?', 'Got it.', 'Okay, makes sense.', 'Yes, I can hear you.', 'Hi everyone, ' + (profile.preferred || '') + ' here.']); }).catch(function () {});
     setRoomState('opening');
     sys('Opening the ' + PLATFORMS[r.meeting.platform].name + ' meeting in a new tab. zoope joins as ' + name + '.');
     if (!((state.neuralReady || liteReady()) && (state.voiceMode || 'neural') === 'neural')) {
@@ -1022,7 +1025,36 @@
     $('extHint').textContent = 'Meetings with a Zoom, Meet or Teams link join the real call.';
     document.querySelector('.ext-steps').classList.add('hidden');
   });
+  ZoopeBrain.onStatus(function (st) {
+    var el = $('brainState');
+    el.textContent = st.state === 'ready' ? 'AI: ready' + (st.device === 'webgpu' ? ' (GPU)' : '')
+      : st.state === 'loading' ? 'AI: loading ' + Math.round(st.progress * 100) + '%'
+      : st.state === 'error' ? 'AI: rules only' : 'AI: off';
+    el.className = 'pill ' + (st.state === 'ready' ? 'pill-green pill-dot' : st.state === 'loading' ? 'pill-amber' : '');
+  });
   $('focusMeeting').addEventListener('click', function () { if (room && room.session) room.session.focus(); });
+
+  /*
+   * Asks the user for help with a question zoope couldn't answer — but only when it
+   * matters: the question was put to the user (by name, one-on-one, or right after
+   * zoope spoke), it's a real question, and the user hasn't been pinged in the last
+   * 90 seconds (later ones wait in the summary's "Waiting on you").
+   */
+  var lastPing = 0;
+  function maybePing(r, d) {
+    var directed = d.reasons.some(function (x) { return /Called by name|One-on-one|Continuing after|Follow-up/.test(x); });
+    var real = d.text.split(/\s+/).length >= 4 && /\?|^(what|when|where|who|why|how|can|could|will|would|do|does|did|is|are)\b/i.test(d.text);
+    if (!directed || !real || Date.now() - lastPing < 90000) return;
+    lastPing = Date.now();
+    var msg = d.speaker + ' asked: “' + d.text + '”';
+    line('ping', 'Needs you', msg + ' Type an answer in the note box and zoope will say it.');
+    $('liveNote').placeholder = 'Answer for ' + d.speaker + ': zoope says it at the next pause';
+    try { beep(988, 140); setTimeout(function () { beep(1318, 160); }, 170); } catch (e) { /* no audio */ }
+    var t0 = document.title, n = 0, flash = setInterval(function () { document.title = n++ % 2 ? t0 : '● zoope needs you'; if (n > 9) { clearInterval(flash); document.title = t0; } }, 700);
+    if (window.Notification && Notification.permission === 'granted') {
+      try { new Notification('zoope needs you', { body: msg, tag: 'zoope-ping' }); } catch (e) { /* not allowed here */ }
+    }
+  }
 
   function sys(text) { line('sys', null, text); }
   function line(cls, who, text) {
@@ -1077,9 +1109,24 @@
     line('', speaker, text);
     highlight(speaker, true);
     setTimeout(function () { highlight(speaker, false); }, 900);
-    var d = room.engine.hear(speaker, text);
+    var r = room, before = r.engine.followUps.length;
+    var d = r.engine.hear(speaker, text);
     logDecision(d);
-    if (d.speak) aiSay(d.reply);
+    if (!d.speak) return;
+    var asked = r.engine.followUps.length > before; // the rule engine couldn't answer from the notes
+    // quick, fixed replies stay instant; answers and replies to statements come from the AI engine
+    var quick = ['summon', 'hearcheck', 'greeting', 'farewell', 'thanks', 'aicheck', 'intro', 'request'].indexOf(d.intent) >= 0;
+    if (quick || !ZoopeBrain.ready()) { aiSay(d.reply); if (asked) maybePing(r, d); return; }
+    var notes = (state.profile.notes || []).map(function (n) { return n.text; }).concat(r.meeting.demo && !(state.profile.notes || []).length ? [SAMPLE_KNOWLEDGE] : []);
+    ZoopeBrain.reply({
+      name: r.engine.preferred, speaker: speaker, text: text, notes: notes,
+      history: r.engine.history.slice(0, -2), timeout: r.live ? 2500 : 4000
+    }).then(function (res) {
+      if (room !== r) return;
+      if (res && res.text) { r.engine.replaceLastReply(res.text, true); aiSay(res.text); return; }
+      aiSay(d.reply);
+      if (asked || (res && res.unknown)) maybePing(r, d);
+    });
   }
 
   function logDecision(d) {
