@@ -197,29 +197,48 @@
    * crossings) shows the teeth, and where the energy sits in the spectrum tells
    * rounded vowels (energy low, "oo", "oh") from spread ones (energy high, "ee").
    */
+  /*
+   * Mouth shape from a stretch of audio, the way a face makes the sound:
+   *  - the jaw opens with loudness and with F1 (the first vocal-tract resonance, high in "ah", low in "ee"/"oo");
+   *  - the lips round when F2 (the second resonance) is low ("oo", "oh") and spread when it is high ("ee");
+   *  - hiss above 3.5 kHz ("s", "f", "sh") brings the teeth together;
+   *  - silence and stops ("m", "b", "p") close the lips.
+   * Resonances are estimated from a 512-point spectrum centred on the stretch.
+   */
+  var N_FFT = 512;
   function shapeOf(x, rate, from, to) {
     from = from || 0; to = to || x.length;
     var n = to - from;
     if (n < 16) return shape('rest');
-    var a = Math.exp(-2 * Math.PI * 900 / rate), lp = 0, e = 0, el = 0, zc = 0, prev = x[from];
-    for (var i = from; i < to; i++) {
-      var v = x[i];
-      e += v * v;
-      if ((v >= 0) !== (prev >= 0)) zc++;
-      prev = v;
-      lp = (1 - a) * v + a * lp;
-      el += lp * lp;
-    }
+    var e = 0;
+    for (var i = from; i < to; i++) e += x[i] * x[i];
     var rms = Math.sqrt(e / n);
     // a soft curve: quiet sounds part the lips a little, normal speech opens about half way
     var loud = Math.pow(Math.max(0, Math.min(1, (rms - 0.008) / 0.16)), 0.75);
     if (loud < 0.03) return shape('rest');
-    var zcrHz = zc / n * rate / 2, low = el / (e || 1);
-    var sm = function (a0, a1, v2) { var t = Math.max(0, Math.min(1, (v2 - a0) / (a1 - a0))); return t * t * (3 - 2 * t); };
-    var fric = sm(1800, 3800, zcrHz);
-    var round = sm(0.8, 0.95, low) * (1 - fric), wide = (1 - sm(0.45, 0.72, low)) * (1 - fric);
+    var start = Math.max(0, Math.min(x.length - N_FFT, Math.round((from + to) / 2 - N_FFT / 2)));
+    if (x.length < N_FFT) return { open: loud, wide: 0, round: 0, teeth: 0 };
+    var mag = spectrum(x.subarray(start, start + N_FFT)), hz = rate / N_FFT;
+    var power = function (f0, f1) { var p = 0; for (var k = Math.max(1, Math.floor(f0 / hz)); k <= Math.min(mag.length - 1, Math.ceil(f1 / hz)); k++) p += mag[k] * mag[k]; return p; };
+    // resonances as spectral peaks: F1 in 250-1000 Hz, F2 in 650-2800 Hz away from F1
+    var peak = function (f0, f1, avoid) {
+      var best = 0, at = (f0 + f1) / 2;
+      for (var k = Math.max(1, Math.floor(f0 / hz)); k <= Math.min(mag.length - 1, Math.ceil(f1 / hz)); k++) {
+        if (avoid && Math.abs(k * hz - avoid) < 250) continue;
+        if (mag[k] > best) { best = mag[k]; at = k * hz; }
+      }
+      return at;
+    };
+    var sm = function (a0, a1, v) { var t = Math.max(0, Math.min(1, (v - a0) / (a1 - a0))); return t * t * (3 - 2 * t); };
+    var nyq = rate / 2 - hz;
+    var fric = sm(0.22, 0.5, power(3500, Math.min(8000, nyq)) / (power(100, Math.min(8000, nyq)) || 1));
+    var f1 = peak(250, 1000), f2 = peak(650, 2800, f1);
+    var jaw = 0.3 + 0.7 * sm(280, 750, f1);
+    // rounded ("oo", "oh"): F2 low and F1 not high; spread ("ee"): F2 high
+    var round = (1 - sm(1300, 1650, f2)) * (1 - sm(600, 720, f1)) * (1 - fric);
+    var wide = sm(1700, 2200, f2) * (1 - fric);
     return {
-      open: loud * (1 - 0.75 * fric) * (1 - 0.3 * round),
+      open: loud * jaw * (1 - 0.75 * fric) * (1 - 0.2 * round),
       wide: wide, round: round, teeth: fric * Math.min(1, loud * 4)
     };
   }

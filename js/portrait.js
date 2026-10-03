@@ -185,13 +185,14 @@ async function build(P) {
     const upperY = e.upper.reduce((s, i) => s + lm[i][1], 0) / e.upper.length;
     const loop = e.upper.concat(e.lower.slice().reverse()).map((i) => lm[i]);
     const xs = loop.map((p) => p[0]);
-    return { upper: e.upper, iris: IRIS[k], lowerY, upperY, loop, width: Math.max(...xs) - Math.min(...xs) };
+    return { upper: e.upper, lower: e.lower, iris: IRIS[k], lowerY, upperY, loop, width: Math.max(...xs) - Math.min(...xs) };
   });
 
   const out = {
     img, W, H, pts, tris, z, headW, jawW, bodyW, n, N, faceH, faceW, faceCx, chin, top: headTop, eyes,
     pivot: [faceCx, (lm[234][1] + lm[454][1]) / 2, hrz * 0.35],
     mouthOpenInPhoto: lm[14][1] - lm[13][1] > faceH * 0.02,
+    cheeks: [lm[205], lm[425]],
     browSet: new Set([70, 63, 105, 66, 107, 55, 65, 52, 53, 46, 300, 293, 334, 296, 336, 285, 295, 282, 283, 276]),
     mouthC: [(lm[61][0] + lm[291][0]) / 2, (lm[13][1] + lm[14][1]) / 2], mouthW: Math.abs(lm[291][0] - lm[61][0])
   };
@@ -314,7 +315,7 @@ export function attach(canvas, face, getLevel, opts = {}) {
     resize();
 
     // animation state
-    let lastNow = 0, sylAmp = 1, inSyl = false;
+    let lastNow = 0, sylAmp = 1, inSyl = false, smileS = 0, idleSmile = 0, nextMood = 0, thinkS = 0;
     let nextPose = 0, poseT = [0, 0, 0], poseC = [0, 0, 0], poseV = [0, 0, 0], browS = 0, browT = 0;
     let mouth = 0, wide = 0, wideS = 0, roundS = 0, teethS = 0, blinkAt = performance.now() + 1600, nextSacc = 0, gaze = [0, 0], gazeT = [0, 0];
     let nod = 0, nodV = 0, lastLevel = 0, talkT = 0;
@@ -342,12 +343,21 @@ export function attach(canvas, face, getLevel, opts = {}) {
             y -= M.faceH * 0.012 * wideS * f * corner * corner;
             y += (y - mcy) * 0.25 * roundS * f * (1 - corner * 0.6);
             if (UPPER_SET.has(i)) y -= M.faceH * 0.012 * teethS * f;
+            // a smile: corners pulled up and out
+            if (smileS > 0.01) { x = mcx + (x - mcx) * (1 + 0.07 * smileS * f); y -= M.faceH * 0.024 * smileS * f * corner * corner; }
+          }
+          // ...and the cheeks rise with it
+          if (smileS > 0.01) for (const c of M.cheeks) {
+            const cd = Math.hypot(x - c[0], y - c[1]) / (M.faceW * 0.2);
+            if (cd < 1) y -= M.faceH * 0.012 * smileS * (1 - smooth(0.2, 1, cd));
           }
         }
         if (M.browSet && M.browSet.has(i)) y -= M.faceH * 0.02 * (M.browLift || 0);
         cur[i * 2] = x; cur[i * 2 + 1] = y;
       }
       M.eyes.forEach((e) => {
+        // smiling eyes: the lower lid rises a touch
+        if (smileS > 0.01) e.lower.forEach((i) => { cur[i * 2 + 1] -= M.faceH * 0.008 * smileS; });
         const close = 0.92 * blink;
         e.upper.forEach((i) => { cur[i * 2 + 1] = e.lowerY - (e.lowerY - M.pts[i][1]) * (1 - close); });
         e.iris.forEach((i) => {
@@ -372,6 +382,13 @@ export function attach(canvas, face, getLevel, opts = {}) {
       wideS += ((sh.wide || 0) - wideS) * ease(0.11);
       roundS += ((sh.round || 0) - roundS) * ease(0.11);
       teethS += ((sh.teeth || 0) - teethS) * ease(0.06);
+      // expression: the line's smile while speaking; while listening it drifts gently, as faces do
+      if (now > nextMood) { idleSmile = Math.random() < 0.5 ? 0 : 0.05 + Math.random() * 0.15; nextMood = now + 4000 + Math.random() * 6000; }
+      const speakingNow = (sh.open || 0) > 0.02 || s - talkT < 0.8;
+      smileS += ((sh.smile != null && (sh.smile > 0 || speakingNow) ? sh.smile : idleSmile) - smileS) * ease(0.4);
+      // thinking (the AI is writing a reply): the eyes drift up and aside, the brows lift slightly
+      thinkS += ((sh.think ? 1 : 0) - thinkS) * ease(0.25);
+      if (thinkS > 0.3 && now > nextSacc) { gazeT = [-0.06, -0.035]; nextSacc = now + 600; }
       const level = mouth;
       if (target > 0.3 && !inSyl) {
         inSyl = true; sylAmp = 0.8 + Math.random() * 0.3;
@@ -412,7 +429,7 @@ export function attach(canvas, face, getLevel, opts = {}) {
         poseC[k] += poseV[k] * dt;
       }
       // eyebrows lift on stressed syllables and settle
-      browS += ((talking ? browT : 0) - browS) * (1 - Math.exp(-dt / 0.12));
+      browS += ((talking ? browT : thinkS * 0.35) - browS) * (1 - Math.exp(-dt / 0.12));
       browT *= Math.exp(-dt / 0.35);
       M.browLift = browS;
       deform(mouth, blink);

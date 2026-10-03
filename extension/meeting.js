@@ -40,10 +40,12 @@
     for (const e of envelopes) {
       const i = Math.floor((now - e.at) / e.step), list = e.shapes || e.levels;
       if (i < 0 || i >= list.length) continue;
-      const v = list[i];
-      return Array.isArray(v) ? { open: v[0], wide: v[1], round: v[2], teeth: v[3] } : { open: v, wide: 0, round: 0, teeth: 0 };
+      const v = list[i], smile = e.smile || 0;
+      return Array.isArray(v) ? { open: v[0], wide: v[1], round: v[2], teeth: v[3], smile } : { open: v, wide: 0, round: 0, teeth: 0, smile };
     }
-    return REST;
+    // silent: mouth closed (a short tail keeps the expression from snapping off between sentences)
+    const last = envelopes[envelopes.length - 1];
+    return last && now - (last.at + (last.shapes || last.levels).length * last.step) < 600 ? Object.assign({}, REST, { smile: last.smile || 0 }) : REST;
   }
   let canvasP = null;
   function avatarCanvas() {

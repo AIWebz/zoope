@@ -922,7 +922,7 @@
     $('speaker').innerHTML = people.map(function (p) { return '<option>' + esc(p) + '</option>'; }).join('');
     $('transcript').innerHTML = '';
     $('decisionLog').innerHTML = '';
-    room.stopAnim = ZoopeAvatar.animate($('roomAvatar'), state.face, function () { return room ? room.level : 0; }, { frame: 'bust' });
+    room.stopAnim = ZoopeAvatar.animate($('roomAvatar'), state.face, function () { return room ? faceState(room) : 0; }, { frame: 'bust' });
     $('roomState').classList.toggle('hidden', !live);
     $('focusMeeting').classList.toggle('hidden', !live);
     $('sayForm').classList.toggle('hidden', live);
@@ -941,7 +941,7 @@
           : 'To join the real call, install the zoope extension (see Setup). Until then, this is a practice room.');
       }
       if (problems.length) sys('Not ready yet: ' + problems.join('; ') + '.');
-      aiSay(room.engine.greetOnJoin());
+      respondWithAI(room, { task: 'join' });
     }
     if (currentRoute !== room.page) navigate(room.page);
     else setTimeout(function () { $('room').scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 50);
@@ -995,7 +995,7 @@
           else if (ev.state === 'lobby') sys('Waiting for the host to let zoope in.');
           else if (ev.state === 'joined') {
             sys('In the call. zoope is following the live captions.');
-            if (!r.greeted) { r.greeted = true; aiSay(r.engine.greetOnJoin()); }
+            if (!r.greeted) { r.greeted = true; respondWithAI(r, { task: 'join' }); }
           } else if (ev.state === 'left') {
             sys(ev.detail || 'The meeting is over.');
             leaveRoom(true);
@@ -1033,7 +1033,7 @@
     document.querySelector('.ext-steps').classList.add('hidden');
   });
   // which version of zoope this is, so an outdated copy of the site is easy to spot
-  var BUILD = '2026-10-01 · AI v8';
+  var BUILD = '2026-10-03 · AI v9';
   $('buildTag').textContent = BUILD;
   ZoopeBrain.onStatus(function (st) {
     // a banner in the meeting room whenever the AI isn't ready, so it's clear why replies are simple
@@ -1052,6 +1052,12 @@
       el.className = 'pill ' + (st.state === 'ready' ? 'pill-green pill-dot' : st.state === 'loading' ? 'pill-amber' : '');
     });
   });
+  // personality and style: used by the AI engine for every reply
+  $('styleSelect').value = state.profile.style || 'friendly';
+  $('styleInstructions').value = state.profile.instructions || '';
+  $('styleSelect').addEventListener('change', function () { state.profile.style = $('styleSelect').value; save(); $('styleSaved').textContent = 'Saved.'; });
+  $('styleInstructions').addEventListener('input', function () { state.profile.instructions = $('styleInstructions').value.trim().slice(0, 600); save(); $('styleSaved').textContent = 'Saved.'; });
+
   // click the AI badge to test it with a simple question
   $('brainStateNav').style.cursor = 'pointer';
   $('brainStateNav').addEventListener('click', function () {
@@ -1121,8 +1127,28 @@
   function timedOut(r, out, tText, how) {
     // voice start = when the first audio is scheduled to play (a wall-clock time, so it works in background tabs)
     var first = true, onEnv = out.onEnvelope;
-    out.onEnvelope = function (env) { if (first) { first = false; timing(r, tText, env.at, how); } onEnv(env); };
+    out.onEnvelope = function (env) { if (first) { first = false; timing(r, tText, env.at, how); } env.smile = r.expr || 0; onEnv(env); };
     return out;
+  }
+
+  /*
+   * What the avatar's face does right now: the mouth shape comes from the audio being played (see the
+   * voices' mouth timelines), the expression from the line being said, and while the AI is writing a
+   * reply the eyes drift away briefly, as people's do when they think.
+   */
+  function faceState(r) {
+    var l = r.level, o = l && typeof l === 'object' ? Object.assign({}, l) : { open: l || 0, wide: 0, round: 0, teeth: 0 };
+    o.smile = r.speaking ? r.expr || 0 : 0;
+    o.think = r.thinking ? 1 : 0;
+    return o;
+  }
+  // How much a line smiles: warm or upbeat words and exclamations lift the mouth corners a little; bad news doesn't.
+  function exprFor(text) {
+    var t = String(text).toLowerCase(), up = 0;
+    if (/!/.test(t)) up += 0.25;
+    if (/\b(great|glad|nice|thanks|thank you|happy|love|awesome|good news|excited|congrats|congratulations|welcome|haha|fun|perfect|hi|hello|hey)\b/.test(t)) up += 0.35;
+    if (/\b(sorry|unfortunately|problem|issue|delay|delayed|blocked|bad|worried|can't|cannot|won't)\b/.test(t)) up -= 0.4;
+    return Math.max(0, Math.min(0.7, 0.12 + up));
   }
 
   function aiSay(text, opts) {
@@ -1134,6 +1160,7 @@
       // so the live path uses no timers at all
       return (r.live || noPause ? Promise.resolve() : new Promise(function (res) { setTimeout(res, 300); })).then(function () {
         if (room !== r) return;
+        r.speaking = true; r.expr = exprFor(text);
         if (r.live) {
           if (!r.session) return;
           var neuralOk = state.neuralReady && (state.voiceMode || 'neural') === 'neural' && neuralState === 'ready';
@@ -1157,7 +1184,7 @@
         highlight(null, true);
         var how = neuralState === 'ready' ? 'cloned voice' : liteReady() ? 'light voice' : 'browser voice';
         return speakAs(text, function (l) { r.level = l; if (l && (l.open || l) > 0.04) timing(r, tText, Date.now(), how); });
-      }).then(function () { highlight(null, false); r.level = 0; });
+      }).then(function () { highlight(null, false); r.level = 0; r.speaking = false; });
     });
     return r.queue;
   }
@@ -1172,39 +1199,69 @@
     var d = r.engine.hear(speaker, text);
     logDecision(d);
     if (!d.speak) return;
-    var asked = r.engine.followUps.length > before; // the rule engine couldn't answer from the notes
-    // "Yes?" when someone just says the user's name; everything else is generated by the AI engine
-    if (!ZoopeBrain.ready() && d.intent !== 'summon' && !r.aiWaitShown) {
-      r.aiWaitShown = true;
-      var bs = ZoopeBrain.status();
-      sys(bs.state === 'loading' ? 'The AI engine is still loading (' + Math.round(bs.progress * 100) + '%). zoope uses simple replies until it is ready.'
-        : 'The AI engine isn\'t running' + (bs.error ? ' (' + bs.error + ')' : '') + ', so zoope uses simple replies.');
-    }
-    if (d.intent === 'summon' || !ZoopeBrain.ready()) { aiSay(d.reply); if (asked) maybePing(r, d); return; }
-    var notes = (state.profile.notes || []).map(function (n) { return n.text; }).concat(r.meeting.demo && !(state.profile.notes || []).length ? [SAMPLE_KNOWLEDGE] : []);
-    // speak the first sentence the moment it's ready; the rest goes out as one smooth utterance
-    var first = true, rest = [];
-    ZoopeBrain.generate({
-      name: r.engine.preferred, fullName: state.profile.fullName, speaker: speaker, text: text, notes: notes,
-      history: r.engine.history.slice(0, -2),
-      // CPU-only models need longer to start; on a GPU replies start within about a second
-      firstTimeout: ZoopeBrain.status().device === 'webgpu' ? 6000 : 10000
-    }, function (sentence) {
+    var directedQ = r.engine.isQuestion(text) && (d.addressed || d.oneOnOne);
+    respondWithAI(r, { task: d.summon ? 'summon' : 'reply', speaker: speaker, text: text, oneOnOne: d.oneOnOne }, d).then(function (res) {
       if (room !== r) return;
+      // the notes didn't cover it (or no reply could be made): it waits on the user
+      if (res && res.ask || !res && directedQ) { r.engine.followUp(speaker, text); maybePing(r, d); }
+    });
+  }
+
+  /*
+   * The speaking pipeline: conversation → the AI engine generates a reply → each sentence becomes
+   * speech as soon as it's written → the avatar's mouth follows that audio → back to idle.
+   * Nothing is scripted: if the AI engine isn't running, zoope stays quiet (and says why, once).
+   * gopts: { task: 'reply' | 'summon' | 'join' | 'relay', speaker, text, oneOnOne }
+   */
+  function respondWithAI(r, gopts, decision) {
+    // one reply at a time, so each reply knows what zoope just said
+    var run = (r.aiChain || Promise.resolve()).then(function () { return room === r ? generateReply(r, gopts, decision) : null; });
+    r.aiChain = run.catch(function () {});
+    return run;
+  }
+  function generateReply(r, gopts, decision) {
+    if (!ZoopeBrain.ready()) { aiNotReady(r); return Promise.resolve(null); }
+    var p = state.profile;
+    var notes = (p.notes || []).map(function (n) { return n.text; }).concat(r.meeting.demo && !(p.notes || []).length ? [SAMPLE_KNOWLEDGE] : []);
+    var hist = r.engine.history;
+    var first = true, rest = [];
+    r.thinking = true;
+    return ZoopeBrain.generate(Object.assign({
+      name: r.engine.preferred, fullName: p.fullName, notes: notes,
+      // the line being answered is passed separately, so leave that exact entry out of the history
+      history: hist.filter(function (h, i) {
+        if (h.ai || h.speaker !== gopts.speaker || h.text !== gopts.text) return true;
+        for (var j = i + 1; j < hist.length; j++) if (!hist[j].ai && hist[j].speaker === gopts.speaker && hist[j].text === gopts.text) return true;
+        return false;
+      }),
+      style: p.style, instructions: p.instructions,
+      shares: r.engine.sharesToMention().map(function (n) { return n.text; }),
+      firstTimeout: ZoopeBrain.status().device === 'webgpu' ? 10000 : 20000
+    }, gopts), function (sentence) {
+      if (room !== r) return;
+      r.thinking = false;
+      // the first sentence is spoken right away; the rest follows as one smooth utterance
       if (first) { first = false; aiSay(sentence); } else rest.push(sentence);
     }).then(function (res) {
-      if (room !== r) return;
+      r.thinking = false;
+      if (room !== r) return null;
       if (rest.length) aiSay(rest.join(' '), { noPause: true });
       if (!res) {
-        aiSay(d.reply); if (asked) maybePing(r, d);
         var err = ZoopeBrain.lastError();
-        if (err && !r.aiErrorShown) { r.aiErrorShown = true; sys('The AI engine hit an error (' + err + '), so zoope used a simple reply.'); }
-        return;
+        if (err && !r.aiErrorShown) { r.aiErrorShown = true; sys('The AI engine hit an error (' + err + '), so zoope stayed quiet.'); }
+        return null;
       }
-      if (res.said.length) r.engine.replaceLastReply(res.said.join(' '), !res.ask);
-      else aiSay(d.reply);
-      if (res.ask) maybePing(r, d);
+      var said = res.said.join(' ');
+      if (said) { r.engine.said(said, decision); r.engine.markShared(said); }
+      return res;
     });
+  }
+  function aiNotReady(r) {
+    if (r.aiWaitShown) return;
+    r.aiWaitShown = true;
+    var bs = ZoopeBrain.status();
+    sys(bs.state === 'loading' ? 'The AI engine is still loading (' + Math.round(bs.progress * 100) + '%). zoope listens but stays quiet until it is ready; it doesn\'t use scripted replies.'
+      : 'The AI engine isn\'t running' + (bs.error ? ' (' + bs.error + ')' : '') + '. zoope listens but stays quiet until it is; connect it with the extension\'s Connect button.');
   }
 
   function logDecision(d) {
@@ -1224,7 +1281,11 @@
     if (!v || !room) return;
     $('liveNote').value = '';
     sys('Your note: ' + v);
-    aiSay(room.engine.relay(v));
+    room.engine.relay(v);
+    var r = room;
+    // the AI says it in its own words; without the AI, zoope says your note exactly as you wrote it
+    if (ZoopeBrain.ready()) respondWithAI(r, { task: 'relay', text: v });
+    else { aiSay(v); r.engine.said(v); }
   });
 
   $('sayForm').addEventListener('submit', function (e) {

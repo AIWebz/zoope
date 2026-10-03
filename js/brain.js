@@ -97,36 +97,63 @@
     });
   }
 
+  var STYLES = {
+    friendly: 'friendly and warm, relaxed, uses first names',
+    professional: 'professional and polished, clear and courteous',
+    concise: 'concise and direct, gets to the point, no small talk',
+    casual: 'casual and upbeat, light humour when it fits',
+    thoughtful: 'thoughtful and measured, considers things before answering'
+  };
+  function similar(a, b) {
+    var A = words(a.toLowerCase()), B = {}, hit = 0;
+    words(b.toLowerCase()).forEach(function (w) { B[w] = true; });
+    A.forEach(function (w) { if (B[w]) hit++; });
+    return A.length >= 3 && hit / A.length >= 0.8;
+  }
+
   /*
-   * Generates a reply and calls onSentence(text) for each sentence as soon as it's ready.
-   * opts: { name, fullName, speaker, text, notes: [string], history: [{speaker, text, ai}], firstTimeout }
-   * Resolves to { said: [sentences], ask: bool } or null when the model isn't ready / was too slow to start.
+   * Generates what zoope says and calls onSentence(text) for each sentence as soon as it's ready.
+   * opts: { task: 'reply' | 'summon' | 'join' | 'relay', name, fullName, speaker, text, notes: [string],
+   *         history: [{speaker, text, ai}], style, instructions, shares: [string], oneOnOne, firstTimeout }
+   * Resolves to { said: [sentences], ask: bool } or null when the model isn't ready / produced nothing.
    */
   function generate(opts, onSentence) {
     if (state !== 'ready') return Promise.resolve(null);
-    var name = opts.name;
-    // only the notes that relate to what was said (a shorter prompt starts replying much sooner)
-    var qw = (String(opts.text).toLowerCase().match(/[a-z0-9]{3,}/g) || []);
+    var name = opts.name, task = opts.task || 'reply', full = opts.fullName || name;
+    // the notes that relate to what was said first (a shorter prompt starts replying sooner)
+    var qw = (String(opts.text || '').toLowerCase().match(/[a-z0-9]{3,}/g) || []);
     var notes = (opts.notes || []).map(function (n) {
       var nw = String(n).toLowerCase(), hit = 0;
       qw.forEach(function (w) { if (nw.indexOf(w) >= 0) hit++; });
       return { n: n, hit: hit };
-    }).sort(function (a, b) { return b.hit - a.hit; }).slice(0, 4).map(function (x) { return x.n; });
+    }).sort(function (a, b) { return b.hit - a.hit; }).slice(0, 5).map(function (x) { return x.n; });
+    var history = (opts.history || []).slice(-14);
+    var mine = history.filter(function (h) { return h.ai; }).map(function (h) { return h.text; });
     var now = new Date();
-    var sys = 'You are ' + (opts.fullName || name) + ' (called ' + name + ') on a live video call. ' +
-      'Speak like a real person: first person, natural, brief (one or two short sentences). ' +
-      'Answer general questions, math and small talk from your own knowledge. ' +
-      'It is ' + now.toLocaleString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '.\n' +
+    var sys = 'You are ' + full + (full !== name ? ' (people call you ' + name + ')' : '') + ', speaking out loud on a live video call, in the first person, as yourself.\n' +
+      'Personality and style: ' + (STYLES[opts.style] || STYLES.friendly) + '.' + (opts.instructions ? ' Your own instructions: ' + opts.instructions : '') + '\n' +
+      'How you talk: like a real person in a meeting. React to what was actually said, specifically. Usually one to three short sentences. ' +
+      'No filler or stock phrases ("Great question", "Got it", "Absolutely"), no repeating what you have already said, and vary your wording. ' +
+      'Remember the conversation and build on it. If something is unclear or you need more detail before you can answer well, ask one short question instead of answering. ' +
+      'Answer general questions, maths and small talk from your own knowledge.\n' +
+      'It is ' + now.toLocaleString(undefined, { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '.\n' +
       'Your notes (the only source for facts about your own work, projects, plans, schedule, numbers and decisions):\n' +
       (notes.length ? notes.map(function (n) { return '- ' + n; }).join('\n') : '- (none)') + '\n' +
-      'If asked about your own work or plans and the notes do not cover it, start with [ASK] and say you will check and get back to them. ' +
-      'Make no promises. If sincerely asked whether you are an AI, say you are ' + name + '\'s AI avatar.';
-    var convo = (opts.history || []).slice(-6).map(function (h) { return (h.ai ? 'You' : h.speaker) + ': ' + h.text; }).join('\n');
-    var user = (convo ? 'Conversation so far:\n' + convo + '\n\n' : '') + opts.speaker + ': ' + opts.text + '\n\nReply as ' + name + ', speaking out loud.';
-    var known = ' ' + notes.concat((opts.history || []).map(function (h) { return h.speaker + ' ' + h.text; }), [name, opts.fullName || '', opts.speaker, opts.text]).join(' ').toLowerCase() + ' ';
+      ((opts.shares || []).length ? 'Things you want to bring up in this meeting when it fits naturally:\n' + opts.shares.map(function (n) { return '- ' + n; }).join('\n') + '\n' : '') +
+      'If you are asked about your own work or plans and the notes do not cover it, start your reply with [ASK] and say you will check and get back to them. ' +
+      'Make no promises or commitments. If someone sincerely asks whether you are an AI, say honestly that you are ' + name + '\'s AI avatar.';
+    var convo = history.map(function (h) { return (h.ai ? 'You' : h.speaker) + ': ' + h.text; }).join('\n');
+    var said = mine.slice(-5);
+    var askLine = task === 'summon' ? opts.speaker + ' just said your name to get your attention and has not said anything else yet. Respond out loud with a very short acknowledgement that invites them to go on.'
+      : task === 'join' ? 'You have just joined the call. Greet everyone in one short, natural sentence.'
+      : task === 'relay' ? 'You just received this note from yourself to say now: "' + opts.text + '". Say it to the meeting in your own natural words, keeping every fact exactly as written.'
+      : opts.speaker + ' just said: "' + opts.text + '"' + (opts.oneOnOne ? ' (it is just the two of you on this call)' : '') + '\nReply to ' + opts.speaker + ' out loud.';
+    var user = (convo ? 'The conversation so far:\n' + convo + '\n\n' : '') + (said.length ? 'Lines you have already said (don\'t reuse their wording):\n' + said.map(function (x) { return '- ' + x; }).join('\n') + '\n\n' : '') + askLine;
+    var known = ' ' + notes.concat(opts.shares || [], history.map(function (h) { return h.speaker + ' ' + h.text; }), [name, full, opts.speaker || '', opts.text || '']).join(' ').toLowerCase() + ' ';
+    var maxSentences = task === 'reply' || task === 'relay' ? 3 : 1;
 
     return new Promise(function (resolve) {
-      var id = ++seq, buf = '', said = [], ask = false, finished = false, firstTimer, gotToken = false;
+      var id = ++seq, buf = '', spoken = [], ask = false, finished = false, firstTimer, gotToken = false;
       var finish = function (val) {
         if (finished) return;
         finished = true; clearTimeout(firstTimer); delete handlers[id];
@@ -138,16 +165,18 @@
         if (/\[ASK\]/i.test(t)) { ask = true; t = t.replace(/\[ASK\]\s*/ig, ''); }
         if (!t || !/[a-z]/i.test(t)) return true;
         if (!grounded(t, known)) { stop(); return false; } // drop an ungrounded claim and stop there
-        said.push(t);
+        // never say (nearly) the same sentence twice in a meeting
+        if (mine.concat(spoken).some(function (x) { return similar(t, x); })) return true;
+        spoken.push(t);
         clearTimeout(firstTimer);
         onSentence(t);
-        if (said.length >= 2) { stop(); return false; } // keep turns short, like people do (and free the CPU for the voice)
+        if (spoken.length >= maxSentences) { stop(); return false; } // keep turns short, like people do
         return true;
       };
       handlers[id] = function (m) {
         if (finished) return;
         if (m.kind === 'token') {
-          if (!gotToken) { gotToken = true; clearTimeout(firstTimer); firstTimer = setTimeout(function () { if (!said.length && buf.trim()) { take(buf + '.'); buf = ''; } }, 12000); }
+          if (!gotToken) { gotToken = true; clearTimeout(firstTimer); firstTimer = setTimeout(function () { if (!spoken.length && buf.trim()) { take(buf + '.'); buf = ''; } }, 12000); }
           buf += m.text;
           // speak a sentence the moment its closing punctuation arrives (don't wait for the next one);
           // a one-word sentence ("Sure.") is joined with the next
@@ -155,18 +184,18 @@
           while ((end = sentenceEnd(buf)) >= 0) {
             var sent = buf.slice(0, end + 1);
             buf = buf.slice(end + 1);
-            if (!take(sent)) { finish({ said: said, ask: ask }); return; }
+            if (!take(sent)) { finish({ said: spoken, ask: ask }); return; }
           }
         } else if (m.kind === 'done' || m.kind === 'error') {
           if (m.kind === 'error') { lastError = m.message; if (window.console) console.warn('[zoope AI]', m.message, m.stack || ''); }
           if (m.kind === 'done' && buf.trim()) take(buf);
-          finish(said.length || ask ? { said: said, ask: ask } : null);
+          finish(spoken.length || ask ? { said: spoken, ask: ask } : null);
         }
       };
-      // only if the model hasn't produced anything at all in time is the rule engine's reply used;
+      // if the model produces nothing at all in time, zoope stays quiet rather than say something canned;
       // once it is writing, zoope waits for its sentence
-      firstTimer = setTimeout(function () { if (!gotToken) { stop(); finish(null); } }, opts.firstTimeout || 8000);
-      send({ id: id, kind: 'ask', messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], maxTokens: 90 });
+      firstTimer = setTimeout(function () { if (!gotToken) { stop(); finish(null); } }, opts.firstTimeout || 15000);
+      send({ id: id, kind: 'ask', messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], maxTokens: task === 'reply' || task === 'relay' ? 110 : 24 });
     });
   }
 

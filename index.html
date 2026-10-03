@@ -314,6 +314,26 @@
 
           <section class="setting">
             <div class="setting-meta">
+              <h2>Personality &amp; style</h2>
+              <p>How zoope talks for you. Its AI engine writes every reply in this style, following your instructions.</p>
+            </div>
+            <div class="panel style-panel">
+              <label class="field-label" for="styleSelect">Style</label>
+              <select id="styleSelect" class="select">
+                <option value="friendly">Friendly and warm</option>
+                <option value="professional">Professional and polished</option>
+                <option value="concise">Concise and direct</option>
+                <option value="casual">Casual and upbeat</option>
+                <option value="thoughtful">Thoughtful and measured</option>
+              </select>
+              <label class="field-label" for="styleInstructions">Your instructions <span class="muted-2">(optional)</span></label>
+              <textarea id="styleInstructions" class="textarea input" rows="3" placeholder="e.g. Keep answers short. Call people by their first name. Don't agree to new deadlines, say you'll check."></textarea>
+              <p class="hint" id="styleSaved">Saved automatically.</p>
+            </div>
+          </section>
+
+          <section class="setting">
+            <div class="setting-meta">
               <h2>Join real meetings</h2>
               <p>The zoope extension opens your meeting in the Zoom, Google Meet or Teams web app, joins with your name, and uses your avatar and voice as its camera and microphone.</p>
             </div>

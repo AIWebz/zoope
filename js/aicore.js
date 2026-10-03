@@ -79,7 +79,7 @@ export function createEngine({ lib, wasmPaths, post }) {
       skip_prompt: true, skip_special_tokens: true,
       callback_function: (text) => { if (stopped.has(id)) throw new Error('__stop'); post({ id, kind: 'token', text }); }
     });
-    const opts = { max_new_tokens: maxTokens || 60, do_sample: true, temperature: 0.7, top_p: 0.9, repetition_penalty: 1.1, streamer };
+    const opts = { max_new_tokens: maxTokens || 60, do_sample: true, temperature: 0.75, top_p: 0.9, repetition_penalty: 1.1, streamer };
     try {
       await gen(messages, opts);
     } catch (err) {
