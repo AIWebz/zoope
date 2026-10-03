@@ -317,6 +317,7 @@ export function attach(canvas, face, getLevel, opts = {}) {
     // animation state
     let lastNow = 0, sylAmp = 1, inSyl = false, smileS = 0, idleSmile = 0, nextMood = 0, thinkS = 0;
     let nextPose = 0, poseT = [0, 0, 0], poseC = [0, 0, 0], poseV = [0, 0, 0], browS = 0, browT = 0;
+    let mouthV = 0, swayPh = Math.random() * 10;
     let mouth = 0, wide = 0, wideS = 0, roundS = 0, teethS = 0, blinkAt = performance.now() + 1600, nextSacc = 0, gaze = [0, 0], gazeT = [0, 0];
     let nod = 0, nodV = 0, lastLevel = 0, talkT = 0;
     const cur = new Float32Array(M.N * 2);
@@ -325,7 +326,7 @@ export function attach(canvas, face, getLevel, opts = {}) {
     // 2D deformation (jaw, lips, lids, eyes) in photo space, then head rotation with depth
     const UPPER_SET = new Set(UPPER_LIP);
     const deform = (open, blink) => {
-      const drop = M.faceH * 0.046 * Math.pow(open, 1.15);
+      const drop = M.faceH * 0.052 * Math.pow(Math.max(0, open), 1.1);
       const [mcx, mcy] = M.mouthC, mw = M.mouthW;
       // lips: spread for "ee", pulled in and pushed out for "oo", upper lip lifted off the teeth for "f"/"s"
       const sx = 0.17 * wideS - 0.32 * roundS;
@@ -378,7 +379,14 @@ export function attach(canvas, face, getLevel, opts = {}) {
       // than the jaw (coarticulation), and each syllable opens a slightly different amount
       const target = Math.min(1, Math.max(sh.open || 0, (sh.teeth || 0) * 0.22)) * sylAmp;
       const ease = (tau) => 1 - Math.exp(-dt / tau);
-      mouth += (target - mouth) * ease(target > mouth ? 0.045 : 0.09);
+      const w0 = target > mouth ? 34 : 24; // natural frequency: opening is quicker than closing
+      // small sub-steps keep the spring stable when frames are slow (background tabs, busy CPU)
+      for (let rem = dt; rem > 1e-6; rem -= 0.008) {
+        const h = Math.min(rem, 0.008);
+        mouthV += ((target - mouth) * w0 * w0 - mouthV * 2 * w0 * 0.9) * h;
+        mouth = Math.max(0, Math.min(1.1, mouth + mouthV * h));
+      }
+      if (target < 0.01 && mouth < 0.01) { mouth = 0; mouthV = 0; } // silent: fully closed
       wideS += ((sh.wide || 0) - wideS) * ease(0.11);
       roundS += ((sh.round || 0) - roundS) * ease(0.11);
       teethS += ((sh.teeth || 0) - teethS) * ease(0.06);
@@ -393,7 +401,11 @@ export function attach(canvas, face, getLevel, opts = {}) {
       if (target > 0.3 && !inSyl) {
         inSyl = true; sylAmp = 0.8 + Math.random() * 0.3;
         // stressed syllables: a small nod and sometimes a brow lift, like a speaker's beat gestures
-        if (target > 0.55) { nodV += 0.0035 + Math.random() * 0.004; if (Math.random() < 0.35) browT = 0.6 + Math.random() * 0.4; }
+        if (target > 0.5) {
+          nodV += 0.005 + Math.random() * 0.006;
+          if (Math.random() < 0.35) browT = 0.6 + Math.random() * 0.4;
+          if (Math.random() < 0.25) { poseT[0] += (Math.random() - 0.5) * 0.05; poseT[2] += (Math.random() - 0.5) * 0.03; }
+        }
       }
       else if (target < 0.12) inSyl = false;
       if (level > 0.25 && lastLevel <= 0.25) { wide = Math.random(); nodV -= 0.006 + Math.random() * 0.008; talkT = s; }
@@ -418,9 +430,9 @@ export function attach(canvas, face, getLevel, opts = {}) {
       // with more and bigger shifts while talking; tiny tremor keeps it from looking frozen
       const talking = s - talkT < 1.2;
       if (now > nextPose) {
-        const k = talking ? 1 : 0.55;
-        poseT = [(Math.random() - 0.5) * 0.09 * k, (Math.random() - 0.5) * 0.05 * k, (Math.random() - 0.5) * 0.045 * k];
-        nextPose = now + (talking ? 900 + Math.random() * 1800 : 2200 + Math.random() * 4500);
+        const k = talking ? 1 : 0.75;
+        poseT = [(Math.random() - 0.5) * 0.15 * k, (Math.random() - 0.5) * 0.08 * k, (Math.random() - 0.5) * 0.07 * k];
+        nextPose = now + (talking ? 700 + Math.random() * 1400 : 1500 + Math.random() * 3500);
         // the eyes lead a head turn, then come back to the camera
         if (Math.random() < 0.5) { gazeT = [poseT[0] * 0.9, -poseT[1] * 0.5]; nextSacc = now + 350 + Math.random() * 400; }
       }
@@ -434,9 +446,10 @@ export function attach(canvas, face, getLevel, opts = {}) {
       M.browLift = browS;
       deform(mouth, blink);
       const tremor = (f, ph) => Math.sin(s * f + ph) * 0.0025;
-      const yaw = poseC[0] + tremor(1.7, 0.3) + tremor(2.9, 1.1);
-      const pitch = poseC[1] + nod - mouth * 0.012 + tremor(2.3, 2.0);
-      const roll = poseC[2] + tremor(1.3, 0.7);
+      const sway = (f, a) => Math.sin(s * f + swayPh) * a + Math.sin(s * f * 2.3 + swayPh * 1.7) * a * 0.35;
+      const yaw = poseC[0] + sway(0.21, 0.018) + tremor(1.7, 0.3) + tremor(2.9, 1.1);
+      const pitch = poseC[1] + nod - mouth * 0.018 + sway(0.17, 0.01) + tremor(2.3, 2.0);
+      const roll = poseC[2] + sway(0.13, 0.012) + tremor(1.3, 0.7);
       const breath = Math.sin(s * Math.PI * 2 / 4.6);
       const cyw = Math.cos(yaw), syw = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch), cr = Math.cos(roll), sr = Math.sin(roll);
 
@@ -451,7 +464,7 @@ export function attach(canvas, face, getLevel, opts = {}) {
           const qx = rx * cr - ry * sr, qy = rx * sr + ry * cr;                     // roll
           x += (qx + px - x) * w; y += (qy + py - y) * w; zz += (rz + pz - zz) * w;
         }
-        y -= breath * 1.1 * (M.bodyW[i] + w * 0.6);
+        y -= breath * 1.7 * (M.bodyW[i] + w * 0.6);
         pos[i * 3] = x; pos[i * 3 + 1] = -y; pos[i * 3 + 2] = -zz;
       }
       geo.attributes.position.needsUpdate = true;

@@ -6,7 +6,8 @@ function show(st) {
   $('bar').style.width = Math.round((s.state === 'ready' ? 1 : s.progress || 0) * 100) + '%';
   if (s.state === 'ready') {
     btn.textContent = 'Connected'; btn.disabled = true;
-    status.textContent = 'AI engine installed and running (' + (s.device === 'webgpu' ? 'GPU' : 'CPU') + '). zoope uses it for its replies.';
+    status.textContent = s.device === 'chrome-ai' ? 'Running Chrome\'s built-in AI (Gemini Nano). zoope uses it for its replies.'
+      : 'Running zoope\'s own AI model (' + (s.device === 'webgpu' ? 'GPU' : 'CPU') + '). zoope uses it for its replies.';
     status.className = 'ok';
   } else if (s.state === 'loading') {
     btn.textContent = 'Connecting…'; btn.disabled = true;
@@ -20,9 +21,25 @@ function show(st) {
     status.textContent = 'Not connected.';
   }
 }
-function refresh() { chrome.runtime.sendMessage({ type: 'aiStatus' }).then(show).catch(() => {}); }
-$('connect').addEventListener('click', () => {
+function refresh() {
+  chrome.runtime.sendMessage({ type: 'aiStatus' }).then((st) => {
+    show(st);
+    if (nanoMsg && st.device !== 'chrome-ai') $('status').textContent = nanoMsg + (st.state === 'ready' ? ' (zoope\'s own model is used until it finishes)' : '');
+  }).catch(() => {});
+}
+let nanoMsg = '';
+$('connect').addEventListener('click', async () => {
   show({ state: 'loading' });
+  // Chrome's built-in AI may need its model downloaded first; that needs this click
+  try {
+    const st = await self.ZoopeNano.status();
+    if (st === 'downloadable' || st === 'downloading') {
+      nanoMsg = 'Chrome is downloading its built-in AI…';
+      self.ZoopeNano.download((p) => { nanoMsg = 'Chrome is downloading its built-in AI: ' + Math.round(p * 100) + '%'; })
+        .then(() => { nanoMsg = ''; chrome.runtime.sendMessage({ type: 'aiStatus' }).then(show); })
+        .catch(() => { nanoMsg = ''; });
+    }
+  } catch (e) { /* no built-in AI: zoope's own model is used */ }
   chrome.runtime.sendMessage({ type: 'aiConnect' }).then(show).catch((e) => show({ state: 'error', error: e.message }));
 });
 refresh();

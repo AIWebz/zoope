@@ -6,6 +6,7 @@
  * the meeting, keeps the session in session storage (the worker can be
  * restarted at any time), and relays messages between the two tabs.
  */
+importScripts('nano.js'); // Chrome's built-in AI (Gemini Nano), when available
 const KEY = 'sessions';
 
 async function sessions() { return (await chrome.storage.session.get(KEY))[KEY] || {}; }
@@ -67,6 +68,7 @@ async function ensureEngine() {
 let pendingUp = null;
 async function aiConnect() {
   await chrome.storage.local.set({ aiConnected: true });
+  if (await nanoAvailable()) return setAiStatus(NANO);
   const st = await aiStatus();
   const running = chrome.offscreen.hasDocument ? await chrome.offscreen.hasDocument() : false;
   if (running && (st.state === 'ready' || st.state === 'loading')) return st;
@@ -80,6 +82,13 @@ async function aiConnect() {
   return aiStatus();
 }
 // request ids from different tabs can clash: they travel as "tab:id"
+function toTab(m) {
+  const o = owner(m.id);
+  if (o) chrome.tabs.sendMessage(o.tab, { type: 'aiEngine', msg: Object.assign({}, m, { id: o.id }) }).catch(() => {});
+}
+// Chrome's built-in AI, run right here in the background, is preferred whenever Chrome has it ready.
+const NANO = { state: 'ready', progress: 1, device: 'chrome-ai', model: 'Gemini Nano (built into Chrome)', error: '' };
+async function nanoAvailable() { try { return (await self.ZoopeNano.status()) === 'available'; } catch (e) { return false; } }
 const owner = (gid) => { const i = String(gid).indexOf(':'); return i < 0 ? null : { tab: +String(gid).slice(0, i), id: +String(gid).slice(i + 1) }; };
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
@@ -94,8 +103,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       else if (m.kind === 'error') setAiStatus({ state: 'error', error: m.message });
       return;
     }
-    const o = owner(m.id);
-    if (o) chrome.tabs.sendMessage(o.tab, { type: 'aiEngine', msg: Object.assign({}, m, { id: o.id }) }).catch(() => {});
+    toTab(m);
     return;
   }
   if (msg.type === 'aiToEngine') return; // meant for the engine page
@@ -142,8 +150,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       case 'aiStatus': {
         await addAiTab(tab);
         const st = await aiStatus();
+        // Chrome's built-in AI became available (e.g. its download finished): switch to it
+        if (st.connected && st.device !== 'chrome-ai' && await nanoAvailable()) return setAiStatus(NANO);
         // installed earlier: start it again (from the extension's storage, no download) when zoope asks
-        if (st.connected && (st.state === 'off' || !(await chrome.offscreen.hasDocument()))) return aiConnect();
+        if (st.connected && st.device !== 'chrome-ai' && (st.state === 'off' || !(await chrome.offscreen.hasDocument()))) return aiConnect();
         return st;
       }
       case 'aiConnect':
@@ -151,6 +161,12 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         return aiConnect();
       case 'aiAsk': {
         await addAiTab(tab);
+        if (await nanoAvailable()) {
+          const st = await aiStatus();
+          if (st.device !== 'chrome-ai') await setAiStatus(NANO);
+          self.ZoopeNano.ask(tab + ':' + msg.id, msg.messages, toTab);
+          return { ok: true };
+        }
         await ensureEngine();
         chrome.runtime.sendMessage({ type: 'aiToEngine', msg: { id: tab + ':' + msg.id, kind: 'ask', messages: msg.messages, maxTokens: msg.maxTokens } }).catch(() => {});
         return { ok: true };
@@ -161,6 +177,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         chrome.runtime.sendMessage({ type: 'aiToEngine', msg: { id: 0, kind: 'garbled' } }).catch(() => {});
         return { ok: true };
       case 'aiStop':
+        self.ZoopeNano.stop(tab + ':' + msg.id);
         chrome.runtime.sendMessage({ type: 'aiToEngine', msg: { id: tab + ':' + msg.id, kind: 'stop' } }).catch(() => {});
         return { ok: true };
 

@@ -130,6 +130,23 @@
     send({ type: 'caption', speaker: r.speaker || 'Someone', text: fresh, self });
   }
 
+  // ---- chat messages from people in the meeting: forwarded to zoope's AI like spoken lines
+  const seenChat = new WeakSet();
+  let chatPrimed = false, chatOpened = false;
+  function readChat() {
+    if (!P.chatMessages) return;
+    let msgs = [];
+    try { msgs = P.chatMessages(); } catch (e) { return; }
+    msgs.forEach((m) => {
+      if (seenChat.has(m.el)) return;
+      seenChat.add(m.el);
+      if (!chatPrimed) return; // messages from before zoope joined aren't answered
+      const self = /^you\b/i.test(m.speaker);
+      if (!self) send({ type: 'caption', speaker: m.speaker, text: m.text, self: false, chat: true });
+    });
+    chatPrimed = true;
+  }
+
   // ---- chat
   async function chat(text) {
     let input = P.chat.input();
@@ -183,7 +200,9 @@
         captionsState = P.captionsOn();
         if (captionTries === 12 && captionsState !== 'on') send({ type: 'log', text: 'captions: could not turn them on; turn on captions in the meeting so zoope can follow it' });
       }
-      if (!captionTimer) captionTimer = setInterval(() => { try { readCaptions(); } catch (e) { /* page changing */ } }, 150);
+      if (!captionTimer) captionTimer = setInterval(() => { try { readCaptions(); readChat(); } catch (e) { /* page changing */ } }, 150);
+      // open the chat panel once, so its messages are on the page to be read
+      if (!chatOpened && Date.now() - joinedAt > 4000) { chatOpened = true; if (!P.chat.input()) U.click(U.find(P.chat.open)); }
       return;
     }
     if (P.lobby.test(text)) { setState('lobby', 'Waiting to be let in.'); return; }

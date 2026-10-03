@@ -117,6 +117,22 @@
       open: [/^chat with everyone$/i, /^open chat/i, /^chat$/i],
       input: () => first('textarea[aria-label*="message" i], textarea[placeholder*="message" i]'),
       send: [/^send a message$/i, /^send message$/i, /^send$/i]
+    },
+    // chat messages: each has a data-message-id; the sender is named on its message group
+    chatMessages() {
+      return Array.from(document.querySelectorAll('[data-message-id]')).map((el) => {
+        const group = el.closest('[data-sender-name]');
+        let speaker = group ? group.getAttribute('data-sender-name') : '';
+        if (!speaker) {
+          // newer layout: the group's first line is the sender's name, then the time
+          let g = el.parentElement;
+          for (let i = 0; g && i < 4 && !speaker; i++, g = g.parentElement) {
+            const first = (g.innerText || '').split('\n').map(norm).filter(Boolean)[0];
+            if (first && first !== norm(el.innerText) && first.length <= 40) speaker = first;
+          }
+        }
+        return { el, speaker: speaker || 'Someone', text: norm(el.innerText) };
+      }).filter((m) => m.text);
     }
   };
 
@@ -152,6 +168,13 @@
         const text = norm(el.innerText).replace(nameEl ? norm(nameEl.innerText) : '', '').replace(/^[:\s]+/, '');
         return { el, speaker: who, text };
       });
+    },
+    chatMessages() {
+      return Array.from(document.querySelectorAll('.chat-item__chat-info-msg, [class*="chat-message__text"]')).map((el) => {
+        const item = el.closest('[class*="chat-item"], [class*="chat-message"]') || el.parentElement;
+        const a = item && item.querySelector('.chat-item__sender, [class*="sender"]');
+        return { el, speaker: a ? norm(a.innerText) : 'Someone', text: norm(el.innerText) };
+      }).filter((m) => m.text);
     },
     leave: [/^leave$/i, /^leave meeting$/i],
     leaveConfirm: [/^leave meeting$/i],
@@ -196,6 +219,13 @@
         const author = item && item.querySelector('[data-tid="author"]');
         return { el, speaker: author ? norm(author.innerText) : 'Someone', text: norm(el.innerText) };
       });
+    },
+    chatMessages() {
+      return Array.from(document.querySelectorAll('[data-tid="chat-pane-message"]')).map((el) => {
+        const item = el.closest('[data-tid="chat-pane-item"], li, [role="listitem"]') || el.parentElement;
+        const a = item && item.querySelector('[data-tid="message-author-name"]');
+        return { el, speaker: a ? norm(a.innerText) : 'Someone', text: norm(el.innerText) };
+      }).filter((m) => m.text);
     },
     leave: [/^leave$/i, /^leave \(ctrl/i, /^hang up$/i],
     leaveConfirm: [/^leave$/i, /^leave meeting$/i],

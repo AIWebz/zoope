@@ -12,6 +12,7 @@ mkdir -p extension/lib/ai
 gunzip -c vendor/transformers/transformers.min.js.gz > extension/lib/ai/transformers.min.js
 cp vendor/transformers/ort-wasm-simd-threaded.* extension/lib/ai/
 cp js/aicore.js extension/lib/ai/
+cp js/nano.js extension/nano.js
 # a zip for the Setup page's download link
 rm -f zoope-extension.zip
 (cd extension && python3 -c "import zipfile,os

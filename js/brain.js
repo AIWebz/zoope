@@ -18,7 +18,10 @@
   // where the engine runs: 'local' (a worker in this page) or 'ext' (installed in the zoope extension)
   var mode = 'local', source = 'this page';
   function send(msg) {
-    if (mode === 'ext') {
+    if (mode === 'nano') {
+      if (msg.kind === 'ask') global.ZoopeNano.ask(msg.id, msg.messages, onEngine);
+      else if (msg.kind === 'stop') global.ZoopeNano.stop(msg.id);
+    } else if (mode === 'ext') {
       if (msg.kind === 'ask') global.ZoopeBridge.ai.ask(msg.id, msg.messages, msg.maxTokens);
       else if (msg.kind === 'stop') global.ZoopeBridge.ai.stop(msg.id);
     } else if (worker) worker.postMessage(msg);
@@ -35,7 +38,9 @@
   // The output was garbled: ask the engine to switch to its next mode.
   function reportGarbled() {
     state = 'loading'; lastError = 'the AI wrote garbled text, so it is switching to another mode'; emit();
-    if (mode === 'ext') global.ZoopeBridge.ai.garbled(); else if (worker) worker.postMessage({ id: 0, kind: 'garbled' });
+    if (mode === 'ext') global.ZoopeBridge.ai.garbled();
+    else if (mode === 'nano') { mode = 'local'; source = 'this page'; load.checked = true; load(); }
+    else if (worker) worker.postMessage({ id: 0, kind: 'garbled' });
   }
 
   /* Use the AI engine installed in the extension (it was connected with the popup's Connect button). */
@@ -70,7 +75,19 @@
     window.addEventListener('online', again);
   }
   function load() {
-    if (worker || mode === 'ext') return;
+    if (worker || mode === 'ext' || mode === 'nano') return;
+    // Chrome's built-in AI (Gemini Nano), when this page can use it: nothing to download through zoope
+    if (global.ZoopeNano && !load.nanoChecked) {
+      load.nanoChecked = true;
+      global.ZoopeNano.status().then(function (st) {
+        if (st === 'available' && mode !== 'ext') {
+          mode = 'nano'; source = 'Chrome\'s built-in AI';
+          state = 'ready'; device = 'chrome-ai'; model = 'Gemini Nano (built into Chrome)'; lastError = '';
+          emit(); nowReady();
+        } else load();
+      });
+      return;
+    }
     // if the extension has the AI engine installed, use that instead of loading another copy here
     var B = global.ZoopeBridge;
     if (B && B.available() && !load.checked) {

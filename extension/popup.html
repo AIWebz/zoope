@@ -14,9 +14,10 @@
 </style></head>
 <body>
   <h1>zoope</h1>
-  <p>Install zoope's AI engine into this extension. It runs on this computer and writes zoope's replies in meetings.</p>
+  <p>Connect zoope's AI. It uses Chrome's built-in AI (Gemini Nano) when your Chrome has it, otherwise zoope's own model. Both run on this computer.</p>
   <button id="connect">Connect</button>
   <div class="bar"><i id="bar"></i></div>
   <div id="status">Not connected.</div>
+  <script src="nano.js"></script>
   <script src="popup.js"></script>
 </body></html>

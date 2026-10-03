@@ -1004,7 +1004,7 @@
         sess.on('caption', function (ev) {
           if (room !== r || ev.self) return; // our own words, captioned back
           addTile(r, ev.speaker);
-          hear(ev.speaker, ev.text);
+          hear(ev.speaker, ev.text, ev.chat);
         });
         sess.on('chatSent', function (ev) { if (room === r && !ev.ok) sys('Couldn\'t post in the meeting chat.'); });
         sess.on('log', function (ev) {
@@ -1033,7 +1033,7 @@
     document.querySelector('.ext-steps').classList.add('hidden');
   });
   // which version of zoope this is, so an outdated copy of the site is easy to spot
-  var BUILD = '2026-10-03 · AI v10';
+  var BUILD = '2026-10-03 · AI v11';
   $('buildTag').textContent = BUILD;
   ZoopeBrain.onStatus(function (st) {
     // a banner in the meeting room whenever the AI isn't ready, so it's clear why replies are simple
@@ -1043,7 +1043,7 @@
     ban.textContent = st.state === 'loading' ? (st.error ? 'AI engine: ' + st.error + '…' : 'AI engine loading: ' + Math.round(st.progress * 100) + '%. zoope listens but stays quiet until it is ready (first time only; it is saved after).')
       : st.state === 'error' ? 'AI engine not running: ' + (st.error || 'unknown error') + '. zoope listens but stays quiet.'
       : 'AI engine starting…';
-    var text = st.state === 'ready' ? 'AI: ready' + (st.device === 'webgpu' ? ' (GPU)' : '')
+    var text = st.state === 'ready' ? 'AI: ready' + (st.device === 'chrome-ai' ? ' (Chrome AI)' : st.device === 'webgpu' ? ' (GPU)' : '')
       : st.state === 'loading' ? 'AI: loading ' + Math.round(st.progress * 100) + '%'
       : st.state === 'error' ? 'AI: not running' : 'AI: starting';
     ['brainState', 'brainStateNav'].forEach(function (id) {
@@ -1189,9 +1189,9 @@
     return r.queue;
   }
 
-  function hear(speaker, text) {
+  function hear(speaker, text, viaChat) {
     if (!room || !text) return;
-    line('', speaker, text);
+    line('', speaker + (viaChat ? ' (chat)' : ''), text);
     highlight(speaker, true);
     setTimeout(function () { highlight(speaker, false); }, 900);
     var r = room, before = r.engine.followUps.length;
