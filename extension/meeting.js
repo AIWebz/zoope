@@ -37,18 +37,25 @@
   let LAG = 40;
   let envelopes = [];
   const REST = { open: 0, wide: 0, round: 0, teeth: 0 };
+  // the face beyond the mouth: { think } while zoope's AI writes a reply; listening while others talk
+  let face = { think: false }, heardAt = 0;
   function mouthLevel() {
     const now = Date.now() - LAG;
     envelopes = envelopes.filter((e) => e.at + (e.shapes || e.levels).length * e.step > now - 1000);
+    const extra = { think: face.think ? 1 : 0, listen: Date.now() - heardAt < 1500 ? 1 : 0 };
+    let soon = Infinity;
     for (const e of envelopes) {
       const i = Math.floor((now - e.at) / e.step), list = e.shapes || e.levels;
-      if (i < 0 || i >= list.length) continue;
+      if (i < 0) { soon = Math.min(soon, e.at - now); continue; }
+      if (i >= list.length) continue;
       const v = list[i], smile = e.smile || 0;
-      return Array.isArray(v) ? { open: v[0], wide: v[1], round: v[2], teeth: v[3], smile } : { open: v, wide: 0, round: 0, teeth: 0, smile };
+      return Object.assign(Array.isArray(v) ? { open: v[0], wide: v[1], round: v[2], teeth: v[3], smile } : { open: v, wide: 0, round: 0, teeth: 0, smile }, extra, { listen: 0 });
     }
+    // about to speak: the lips part a little first, as people's do when they take a breath to talk
+    if (soon < 220) return Object.assign({}, REST, { open: 0.07 * (1 - soon / 220), wide: 0.1 }, extra, { listen: 0 });
     // silent: mouth closed (a short tail keeps the expression from snapping off between sentences)
     const last = envelopes[envelopes.length - 1];
-    return last && now - (last.at + (last.shapes || last.levels).length * last.step) < 600 ? Object.assign({}, REST, { smile: last.smile || 0 }) : REST;
+    return Object.assign({}, REST, last && now - (last.at + (last.shapes || last.levels).length * last.step) < 600 ? { smile: last.smile || 0 } : {}, extra);
   }
   let canvasP = null;
   function avatarCanvas() {
@@ -104,14 +111,17 @@
       if (!it.text) return;
       let r = lines.get(it.el);
       if (!r) { r = { text: '', said: '', partial: '', speaker: it.speaker, changed: now }; lines.set(it.el, r); }
-      if (it.text !== r.text) { r.text = it.text; r.speaker = it.speaker || r.speaker; r.changed = now; }
+      if (it.text !== r.text) {
+        r.text = it.text; r.speaker = it.speaker || r.speaker; r.changed = now;
+        if (!/^you\b/i.test(r.speaker)) heardAt = now; // someone else is talking: the avatar listens
+      }
     });
     lines.forEach((r, el) => {
       const gone = !el.isConnected, quiet = now - r.changed;
       // a question mark ends a line almost at once; other punctuation quickly; no punctuation after a pause
       const wait = /\?$/.test(r.text) ? 120 : /[.!]$/.test(r.text) ? 220 : 520;
       if (gone || quiet > wait) flush(r);
-      else if (quiet > 200) preview(r);
+      else if (quiet > 160) preview(r);
       if (gone) lines.delete(el);
     });
   }
@@ -250,6 +260,8 @@
       if (!msg) return;
       if (msg.type === 'signal') toPage('signal', msg.data);
       else if (msg.type === 'mouth') envelopes.push(msg.env);
+      else if (msg.type === 'mouthCut') envelopes = []; // talked over: the mouth stops with the voice
+      else if (msg.type === 'face') face = Object.assign(face, msg.face || {});
       else if (msg.type === 'chat' && top) chat(msg.text).then((ok) => send({ type: 'chatSent', ok, text: msg.text }));
       else if (msg.type === 'leave' && top) leave();
     });

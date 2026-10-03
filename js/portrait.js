@@ -315,7 +315,7 @@ export function attach(canvas, face, getLevel, opts = {}) {
     resize();
 
     // animation state
-    let lastNow = 0, sylAmp = 1, inSyl = false, smileS = 0, idleSmile = 0, nextMood = 0, thinkS = 0;
+    let lastNow = 0, sylAmp = 1, inSyl = false, smileS = 0, idleSmile = 0, nextMood = 0, thinkS = 0, listenS = 0, nextListen = 0;
     let nextPose = 0, poseT = [0, 0, 0], poseC = [0, 0, 0], poseV = [0, 0, 0], browS = 0, browT = 0;
     let mouthV = 0, swayPh = Math.random() * 10;
     let mouth = 0, wide = 0, wideS = 0, roundS = 0, teethS = 0, blinkAt = performance.now() + 1600, nextSacc = 0, gaze = [0, 0], gazeT = [0, 0];
@@ -402,6 +402,14 @@ export function attach(canvas, face, getLevel, opts = {}) {
       // thinking (the AI is writing a reply): the eyes drift up and aside, the brows lift slightly
       thinkS += ((sh.think ? 1 : 0) - thinkS) * ease(0.25);
       if (thinkS > 0.3 && now > nextSacc) { gazeT = [-0.06, -0.035]; nextSacc = now + 600; }
+      // listening while someone else talks: small, slow nods now and then, a slight tilt, a hint of a smile
+      listenS += ((sh.listen ? 1 : 0) - listenS) * ease(0.6);
+      if (listenS > 0.5 && !speakingNow && now > nextListen) {
+        nodV += 0.003 + Math.random() * 0.004;
+        if (Math.random() < 0.4) poseT[2] += (Math.random() - 0.5) * 0.03;
+        if (Math.random() < 0.25) idleSmile = Math.min(0.3, idleSmile + 0.1);
+        nextListen = now + 1600 + Math.random() * 2600;
+      }
       const level = mouth;
       if (target > 0.3 && !inSyl) {
         inSyl = true; sylAmp = 0.8 + Math.random() * 0.3;

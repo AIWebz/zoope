@@ -111,6 +111,10 @@
     });
   };
 
+  // the avatar's face in the meeting: { think } while the AI writes a reply
+  Session.prototype.face = function (f) { return this._send({ type: 'face', face: f }); };
+  // zoope was talked over: the mouth stops with the voice
+  Session.prototype.cutVoice = function () { return this._send({ type: 'mouthCut' }); };
   Session.prototype.chat = function (text) { return this._send({ type: 'chat', text: text }); };
   Session.prototype.focus = function () { return call({ type: 'focusMeeting', sessionId: this.id }); };
   Session.prototype.leave = function () { return this._send({ type: 'leave' }); };
@@ -154,7 +158,7 @@
       connect: function () { return call({ type: 'aiConnect' }, 15000); },
       ask: function (id, messages, maxTokens) { return call({ type: 'aiAsk', id: id, messages: messages, maxTokens: maxTokens }, 15000); },
       stop: function (id) { return call({ type: 'aiStop', id: id }); },
-      warm: function (system) { return call({ type: 'aiWarm', system: system }); },
+      warm: function (system, lines) { return call({ type: 'aiWarm', system: system, lines: lines || null }); },
       garbled: function () { return call({ type: 'aiGarbled' }); },
       on: function (fn) { aiListeners.push(fn); }
     }

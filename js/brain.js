@@ -171,20 +171,37 @@
 
   function systemPrompt(opts) {
     var name = opts.name, full = opts.fullName || name;
-    return 'You are ' + full + ', talking on a live video call. Speak in the first person, naturally, like a real person: ' +
-      'one to three short sentences that respond to what was just said. Style: ' + (STYLES[opts.style] || STYLES.friendly) + '.' +
+    return 'You are ' + full + ', talking with colleagues on a live video call. Talk exactly like a real person on a call: ' +
+      'casual spoken English with contractions, one to three short sentences that respond to what was just said. Style: ' + (STYLES[opts.style] || STYLES.friendly) + '.' +
       (opts.instructions ? ' ' + opts.instructions : '') + '\n' +
-      'Answer right away: put the answer first. Do not repeat yourself and do not use filler. If something is unclear, ask a short question.\n' +
+      'Answer right away: put the answer first. A natural opener like "Yeah,", "So,", "Hmm," or "Oh," is fine now and then, never the same one twice in a row. ' +
+      'Never sound like an assistant or a chatbot: no "Great question", no "Certainly", no "I\'d be happy to help", no offers of more help, no lists, no emojis, no formal sign-offs. ' +
+      'Do not repeat yourself. If something is unclear, ask a short question back, as people do.\n' +
       'Facts about your own work, plans, schedule and numbers come only from your notes. ' +
       'If asked about your own work or plans and your notes do not say, start with [ASK] and say you will check and get back to them. ' +
       'Make no promises. If someone sincerely asks whether you are an AI, say you are ' + name + '\'s AI avatar.';
   }
-  // Gets the AI ready for this meeting's replies ahead of time (Chrome's AI keeps the system prompt loaded).
+  // the conversation as lines ("Priya Shah: …", "Alex (you): …"), the same way every time, so Chrome's AI
+  // can keep reading it as it grows instead of starting over (see nano.js)
+  function convoLines(history, opts) {
+    var me = (opts.fullName || opts.name).split(' ')[0] + ' (you)';
+    return (history || []).map(function (h) { return (h.ai ? me : h.speaker) + ': ' + h.text; });
+  }
+  // Gets the AI ready for this meeting's replies ahead of time: Chrome's AI keeps the system prompt loaded,
+  // and reads each new line of the conversation as it is said (opts.history), not when a reply is due.
   function warm(opts) {
     if (state !== 'ready') return;
-    var sys = systemPrompt(opts);
-    if (mode === 'nano') global.ZoopeNano.warm(sys).catch(function () {});
-    else if (mode === 'ext' && global.ZoopeBridge.ai.warm) global.ZoopeBridge.ai.warm(sys);
+    var sys = systemPrompt(opts), lines = opts.history ? convoLines(opts.history, opts) : null;
+    if (mode === 'nano') global.ZoopeNano.warm(sys, lines).catch(function () {});
+    else if (mode === 'ext' && global.ZoopeBridge.ai.warm) global.ZoopeBridge.ai.warm(sys, lines);
+  }
+  // sounds like an assistant, not a person: never said (unless they asked whether this is an AI)
+  var ASSISTANT = /\b(as an ai|language model|i('| a)m (just )?an ai|ai assistant|virtual assistant|happy to (help|assist)|glad to (help|assist)|feel free to|let me know if (you|there)|is there anything else|hope (this|that) helps|i don'?t have (personal|real-time|access)|as of my (last|knowledge))\b/i;
+  function humanize(t) {
+    return t.replace(/[*_#`]+/g, '')
+      .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]\uFE0F?/gu, '')
+      .replace(/^(certainly|absolutely|great question|good question|of course|sure thing|excellent question)[!,.]\s*/i, '')
+      .replace(/\s{2,}/g, ' ').trim();
   }
 
   /*
@@ -249,7 +266,11 @@
         // broken output is never spoken
         if (garbled(t) || garbled(spoken.concat([t]).join(' '))) { isGarbled = true; stop(); return false; }
         if (/\[ASK\]/i.test(t)) { ask = true; t = t.replace(/\[ASK\]\s*/ig, ''); }
+        var raw = t;
+        t = humanize(t);
+        if (t && t !== raw) t = t.charAt(0).toUpperCase() + t.slice(1); // an opener was taken off
         if (!t || !/[a-z]/i.test(t)) return true;
+        if (!opts.aiCheck && ASSISTANT.test(t)) return true; // skip it, keep going
         if (!grounded(t, known)) { stop(); return false; } // drop an ungrounded claim and stop there
         // never say (nearly) the same sentence twice in a meeting
         if (mine.concat(spoken).some(function (x) { return similar(t, x); })) return true;
@@ -289,14 +310,17 @@
       // if the model produces nothing at all in time, zoope stays quiet rather than say something canned;
       // once it is writing, zoope waits for its sentence
       firstTimer = setTimeout(function () { if (!gotToken) { stop(); finish(null); } }, opts.firstTimeout || 15000);
-      send({ id: id, kind: 'ask', messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], maxTokens: task === 'reply' || task === 'relay' ? 110 : 24 });
+      var um = { role: 'user', content: user };
+      // Chrome's AI already has the conversation read (see warm()); it only reads the new part
+      if (mode === 'nano' || mode === 'ext') { um.lines = convoLines(opts.fullHistory || opts.history, opts); um.short = context + '\n' + askLine; }
+      send({ id: id, kind: 'ask', messages: [{ role: 'system', content: sys }, um], maxTokens: task === 'reply' || task === 'relay' ? 110 : 24 });
     });
   }
 
   watchExtension();
 
   global.ZoopeBrain = {
-    load: load, generate: generate, warm: warm,
+    load: load, generate: generate, warm: warm, humanize: humanize,
     ready: function () { return state === 'ready'; },
     status: function () { return { state: state, device: device, model: model, progress: progress, error: lastError, source: source }; },
     lastError: function () { return lastError; },

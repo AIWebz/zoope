@@ -198,8 +198,18 @@ function mouthTimeline(ac, onLevel) {
  * the voice into a stream (a real meeting) instead of the speakers; the mouth
  * shapes are reported with wall-clock times so a remote avatar can follow them.
  */
+// what is playing now, so stop() can cut it off (someone talked over zoope)
+let epoch = 0;
+const liveSrc = new Set();
+export function stop() {
+  epoch++;
+  if (engine) engine.cancel();
+  liveSrc.forEach((s) => { try { s.stop(); } catch (e) { /* ended */ } });
+  liveSrc.clear();
+}
 export async function speak(text, onLevel, out) {
   if (!ready()) throw new Error('No cloned voice yet');
+  const my = epoch;
   const AC = window.AudioContext || window.webkitAudioContext;
   const ac = out ? out.context : new AC({ sampleRate: engine.sampleRate });
   await ac.resume();
@@ -216,6 +226,8 @@ export async function speak(text, onLevel, out) {
       src.buffer = buf;
       src.connect(dest);
       src.start(cursor);
+      liveSrc.add(src);
+      src.addEventListener('ended', () => liveSrc.delete(src));
       mouth.add(frame, engine.sampleRate, cursor);
       lastSrc = src;
       if (out && out.onEnvelope) out.onEnvelope(envelope(frame, engine.sampleRate, Date.now() + (cursor - ac.currentTime) * 1000));
@@ -231,6 +243,7 @@ export async function speak(text, onLevel, out) {
     const LEAD = leadSeconds;
     let pending = [], pendingDur = 0, underruns = 0;
     for await (const frame of engine.speak(text, new Float32Array(1), { temperature: TEMP })) {
+      if (my !== epoch) break; // cut off
       pending.push(frame);
       pendingDur += frame.length / engine.sampleRate;
       const ahead = started ? cursor - ac.currentTime : 0;
@@ -240,12 +253,12 @@ export async function speak(text, onLevel, out) {
       else { if (!pending.rebuffering) { underruns++; pending.rebuffering = true; } go = pendingDur >= LEAD; } // fell behind: refill once
       if (go) { play(pending); pending = []; pendingDur = 0; }
     }
-    if (pending.length) play(pending);
+    if (pending.length && my === epoch) play(pending);
     // learn: more buffer after a stutter, less when it was smooth
     leadSeconds = underruns ? Math.min(1.5, leadSeconds * 1.6) : Math.max(0.15, leadSeconds * 0.9);
   }
   // wait for the last piece of audio to finish (an audio event, which background tabs don't delay)
-  if (lastSrc && lastEnd > ac.currentTime) await new Promise((resolve) => { lastSrc.onended = resolve; });
+  if (my === epoch && lastSrc && lastEnd > ac.currentTime) await new Promise((resolve) => { lastSrc.onended = resolve; });
   mouth.stop();
   if (!out) ac.close();
 }

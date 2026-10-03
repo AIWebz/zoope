@@ -169,6 +169,9 @@ export async function render(text, v) {
  * Speaks text in the light voice. onLevel(shape) drives the mouth;
  * out: { context, destination, onEnvelope } sends it into a meeting instead.
  */
+// what is playing now, so stop() can cut it off (someone talked over zoope)
+let current = null;
+export function stop() { if (current) { try { current.stop(); } catch (e) { /* ended */ } current = null; } }
 export async function speak(text, v, onLevel, out) {
   const AC = window.AudioContext || window.webkitAudioContext;
   const ac = out ? out.context : new AC();
@@ -192,7 +195,9 @@ export async function speak(text, v, onLevel, out) {
     requestAnimationFrame(tick);
   })();
   last.start(startAt);
+  current = last;
   await new Promise((resolve) => { last.onended = resolve; });
+  if (current === last) current = null;
   playing = false;
   if (onLevel) onLevel({ open: 0, wide: 0, round: 0, teeth: 0 });
   if (!out) ac.close();

@@ -173,7 +173,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       }
       case 'aiWarm':
         // get Chrome's AI ready for this meeting's replies ahead of time
-        if (await nanoAvailable()) self.ZoopeNano.warm(msg.system).catch(() => {});
+        if (await nanoAvailable()) self.ZoopeNano.warm(msg.system, msg.lines || null).catch(() => {});
         return { ok: true };
       case 'aiGarbled':
         // a zoope tab saw broken output: the engine moves to its next mode

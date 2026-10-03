@@ -1005,11 +1005,16 @@
         });
         sess.on('caption', function (ev) {
           if (room !== r || ev.self) return; // our own words, captioned back
+          if (!ev.chat && wordCount(ev.text) >= 5) yieldTurn(r, ev.speaker);
           addTile(r, ev.speaker);
           hear(ev.speaker, ev.text, ev.chat);
         });
         // someone is still talking: zoope's AI starts on what they've said so far
-        sess.on('partial', function (ev) { if (room === r) preview(r, ev.speaker, ev.text); });
+        sess.on('partial', function (ev) {
+          if (room !== r) return;
+          if (wordCount(ev.text) >= 5) yieldTurn(r, ev.speaker);
+          preview(r, ev.speaker, ev.text);
+        });
         sess.on('chatSent', function (ev) { if (room === r && !ev.ok) sys('Couldn\'t post in the meeting chat.'); });
         sess.on('log', function (ev) {
           if (/^(captions|chat box)/.test(ev.text) && room === r) sys(ev.text.replace(/^captions: /, ''));
@@ -1037,7 +1042,7 @@
     document.querySelector('.ext-steps').classList.add('hidden');
   });
   // which version of zoope this is, so an outdated copy of the site is easy to spot
-  var BUILD = '2026-10-03 · AI v12';
+  var BUILD = '2026-10-03 · AI v13';
   $('buildTag').textContent = BUILD;
   ZoopeBrain.onStatus(function (st) {
     if (st.state === 'ready' && room) ZoopeBrain.warm(aiPersona(room));
@@ -1157,15 +1162,15 @@
   }
 
   function aiSay(text, opts) {
-    var r = room, noPause = opts && opts.noPause, tText = Date.now();
+    var r = room, noPause = opts && opts.noPause, tText = Date.now(), ep = r.epoch || 0;
     r.queue = r.queue.then(function () {
-      if (room !== r) return;
+      if (room !== r || ep !== (r.epoch || 0)) return; // someone talked over zoope: this part isn't said
       // a short natural pause before speaking; in real calls keep it tight so replies don't lag
       // in a real call the zoope tab is in the background, where Chrome delays timers by up to a second,
       // so the live path uses no timers at all
       return (r.live || noPause ? Promise.resolve() : new Promise(function (res) { setTimeout(res, 300); })).then(function () {
-        if (room !== r) return;
-        r.speaking = true; r.expr = exprFor(text);
+        if (room !== r || ep !== (r.epoch || 0)) return;
+        r.speaking = true; r.speakStart = Date.now(); r.expr = exprFor(text);
         if (r.live) {
           if (!r.session) return;
           var neuralOk = state.neuralReady && (state.voiceMode || 'neural') === 'neural' && neuralState === 'ready';
@@ -1203,6 +1208,7 @@
     r.t0 = Date.now(); r.timed = false;
     var d = r.engine.hear(speaker, text);
     logDecision(d);
+    keepReading(r);
     // an answer the AI started while this line was still being said: used if it was for exactly these words
     var spec = r.spec, task = d.summon ? 'summon' : 'reply';
     r.spec = null;
@@ -1210,7 +1216,7 @@
     if (spec && !useSpec && spec.control.cancel) spec.control.cancel();
     if (!d.speak) return;
     var directedQ = r.engine.isQuestion(text) && (d.addressed || d.oneOnOne);
-    var gopts = { task: task, speaker: speaker, text: text, oneOnOne: d.oneOnOne };
+    var gopts = { task: task, speaker: speaker, text: text, oneOnOne: d.oneOnOne, aiCheck: d.intent === 'aicheck' };
     (useSpec ? inTurn(r, function () { return spec.commit(d); }) : respondWithAI(r, gopts, d)).then(function (res) {
       if (room !== r) return;
       // the notes didn't cover it (or no reply could be made): it waits on the user
@@ -1232,8 +1238,11 @@
     var d = r.engine.peek(speaker, text);
     if (!d.speak) return;
     r.spec = { speaker: speaker, text: text, control: {} };
-    generateReply(r, { task: d.summon ? 'summon' : 'reply', speaker: speaker, text: text, oneOnOne: d.oneOnOne }, null, r.spec);
+    generateReply(r, { task: d.summon ? 'summon' : 'reply', speaker: speaker, text: text, oneOnOne: d.oneOnOne, aiCheck: d.intent === 'aicheck' }, null, r.spec);
   }
+  // Chrome's AI reads each line of the meeting as it's said, so a reply only has to read the question
+  function keepReading(r) { ZoopeBrain.warm(Object.assign(aiPersona(r), { history: r.engine.history })); }
+  function wordCount(t) { return (String(t).match(/[A-Za-z0-9']+/g) || []).length; }
   function sameWords(a, b) {
     var f = function (x) { return String(x).toLowerCase().replace(/[^a-z0-9' ]/g, ' ').replace(/\s+/g, ' ').trim(); };
     return f(a) === f(b);
@@ -1261,11 +1270,14 @@
     var p = state.profile;
     var notes = (p.notes || []).map(function (n) { return n.text; }).concat(r.meeting.demo && !(p.notes || []).length ? [SAMPLE_KNOWLEDGE] : []);
     var hist = r.engine.history;
-    var held = !!spec, early = [], pending = [], talking = false, firstSaid = false;
-    if (!spec) r.thinking = true;
+    var held = !!spec, early = [], pending = [], talking = false, firstSaid = false, ep0 = r.epoch || 0, delivered = [];
+    var control = spec ? spec.control : {};
+    if (!spec) { setThinking(r, true); r.genControl = control; }
+    var cut = function () { return (r.epoch || 0) !== ep0; };
     // the first piece is spoken the moment it's written; what's written while it plays follows as one
     // smooth utterance as soon as it ends (so there is no wait for the whole reply, and no gap)
     var pump = function () {
+      if (cut()) pending.length = 0;
       if (talking || !pending.length || room !== r) return;
       talking = true;
       var text = pending.splice(0).join(' ');
@@ -1273,22 +1285,28 @@
       firstSaid = true;
     };
     var deliver = function (sentence) {
-      if (room !== r) return;
-      r.thinking = false;
+      if (room !== r || cut()) return;
+      setThinking(r, false);
+      delivered.push(sentence);
       pending.push(sentence);
       pump();
     };
     var wrapUp = function (res) {
-      r.thinking = false;
+      setThinking(r, false);
       if (room !== r) return null;
       pump();
+      // talked over: what zoope had started saying counts as said, and nothing waits on the user
+      if (cut()) {
+        if (delivered.length) { r.engine.said(delivered.join(' '), decision); keepReading(r); }
+        return { said: delivered, ask: false, cut: true };
+      }
       if (!res) {
         var err = ZoopeBrain.lastError();
         if (err && !r.aiErrorShown) { r.aiErrorShown = true; sys('The AI engine hit an error (' + err + '), so zoope stayed quiet.'); }
         return null;
       }
       var said = res.said.join(' ');
-      if (said) { r.engine.said(said, decision); r.engine.markShared(said); }
+      if (said) { r.engine.said(said, decision); r.engine.markShared(said); keepReading(r); }
       return res;
     };
     var gen = ZoopeBrain.generate(Object.assign(aiPersona(r), {
@@ -1299,18 +1317,38 @@
         for (var j = i + 1; j < hist.length; j++) if (!hist[j].ai && hist[j].speaker === gopts.speaker && hist[j].text === gopts.text) return true;
         return false;
       }),
+      fullHistory: hist.slice(),
       shares: r.engine.sharesToMention().map(function (n) { return n.text; }),
       firstTimeout: ZoopeBrain.status().device === 'webgpu' ? 10000 : 20000,
-      control: spec ? spec.control : null
+      control: control
     }, gopts), function (sentence) { if (held) early.push(sentence); else deliver(sentence); });
     if (!spec) return gen.then(wrapUp);
     spec.task = gopts.task;
     spec.commit = function (d) {
-      decision = d; held = false;
-      if (early.length) early.splice(0).forEach(deliver); else r.thinking = true;
+      decision = d; held = false; ep0 = r.epoch || 0; r.genControl = control;
+      if (early.length) early.splice(0).forEach(deliver); else setThinking(r, true);
       return gen.then(wrapUp);
     };
     return gen;
+  }
+  // While the AI writes a reply, the avatar looks away briefly, as people do when they think (in the
+  // meeting too).
+  function setThinking(r, v) {
+    v = !!v;
+    if (r.thinking === v) return;
+    r.thinking = v;
+    if (r.live && r.session) r.session.face({ think: v });
+  }
+  // Someone talks over zoope: like a person, it stops mid-sentence and lets them speak.
+  function yieldTurn(r, speaker) {
+    if (!r.speaking || Date.now() - (r.speakStart || 0) < 600) return;
+    r.epoch = (r.epoch || 0) + 1;
+    if (r.genControl && r.genControl.cancel) r.genControl.cancel();
+    if (neuralState === 'ready') neural().then(function (m) { if (m.stop) m.stop(); }).catch(function () {});
+    if (liteReady()) lite().then(function (m) { if (m.stop) m.stop(); }).catch(function () {});
+    if (r.session) r.session.cutVoice();
+    r.level = 0;
+    sys(r.engine.preferred + ' stopped talking so ' + speaker + ' could speak.');
   }
   // who zoope is, for the AI (the same all meeting, so the AI can keep it loaded)
   function aiPersona(r) {
