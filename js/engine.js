@@ -329,6 +329,18 @@
     return decision;
   };
 
+  /* Would zoope answer this line? Same decision as hear(), without recording anything (for a line still being said). */
+  ZoopeEngine.prototype.peek = function (speaker, text) {
+    var keep = { turn: this.turn, summoned: this.summoned, addressedByName: this.addressedByName, oneOnOne: this.oneOnOne,
+      history: this.history.length, speakers: this.speakers.length, actionItems: this.actionItems.length,
+      unknownNames: this.unknownNames.length, decisions: this.decisions.length };
+    var d = this.hear(speaker, text);
+    this.turn = keep.turn; this.summoned = keep.summoned; this.addressedByName = keep.addressedByName; this.oneOnOne = keep.oneOnOne;
+    this.history.length = keep.history; this.speakers.length = keep.speakers; this.actionItems.length = keep.actionItems;
+    this.unknownNames.length = keep.unknownNames; this.decisions.length = keep.decisions;
+    return d;
+  };
+
   ZoopeEngine.prototype.said = function (text, decision) {
     this.turn++;
     this.lastAITurn = this.turn;

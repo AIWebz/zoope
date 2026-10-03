@@ -243,12 +243,26 @@
     };
   }
   function r2(v) { return Math.round(v * 100) / 100; }
-  /* Shapes every `step` ms of a chunk of samples (for streaming to a remote avatar). */
+  /*
+   * Shapes every `step` ms of a chunk of samples (for streaming to a remote avatar), with
+   * coarticulation, as real mouths move: the lips get ready for the next sound early (spreading
+   * and rounding blend with the next ~60 ms), the jaw moves smoothly, a closure that lasts (a
+   * pause, "p", "b", "m") stays crisp, a 20 ms dip in the sound doesn't snap the lips shut, and a
+   * lone 20 ms blip doesn't flap them open.
+   */
   function shapeTrack(samples, rate, step) {
-    var n = Math.max(1, Math.round(rate * step / 1000)), out = [];
-    for (var i = 0; i < samples.length; i += n) {
-      var sh = shapeOf(samples, rate, i, Math.min(samples.length, i + n));
-      out.push([r2(sh.open), r2(sh.wide), r2(sh.round), r2(sh.teeth)]);
+    var n = Math.max(1, Math.round(rate * step / 1000)), raw = [], out = [];
+    for (var i = 0; i < samples.length; i += n) raw.push(shapeOf(samples, rate, i, Math.min(samples.length, i + n)));
+    for (var j = 0; j < raw.length; j++) {
+      var p = raw[j - 1] || raw[j], c = raw[j], nx = raw[j + 1] || raw[j], nx2 = raw[j + 2] || nx;
+      var open;
+      if (c.open < 0.04) open = p.open > 0.1 && nx.open > 0.1 ? 0.35 * Math.min(p.open, nx.open) : c.open;
+      else open = 0.2 * p.open + 0.6 * c.open + 0.2 * nx.open;
+      if (c.open >= 0.04 && p.open < 0.04 && nx.open < 0.04) open *= 0.4;
+      var wide = 0.15 * p.wide + 0.35 * c.wide + 0.3 * nx.wide + 0.2 * nx2.wide;
+      var round = 0.15 * p.round + 0.35 * c.round + 0.3 * nx.round + 0.2 * nx2.round;
+      var teeth = 0.25 * p.teeth + 0.5 * c.teeth + 0.25 * nx.teeth;
+      out.push([r2(open), r2(wide), r2(round), r2(teeth)]);
     }
     return out;
   }

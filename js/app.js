@@ -941,6 +941,7 @@
           : 'To join the real call, install the zoope extension (see Setup). Until then, this is a practice room.');
       }
       if (problems.length) sys('Not ready yet: ' + problems.join('; ') + '.');
+      ZoopeBrain.warm(aiPersona(room));
       respondWithAI(room, { task: 'join' });
     }
     if (currentRoute !== room.page) navigate(room.page);
@@ -986,6 +987,7 @@
       .then(function (sess) {
         if (room !== r) { sess.leave(); sess.end(); return; }
         r.session = sess;
+        ZoopeBrain.warm(aiPersona(r)); // the AI is ready to answer before anyone speaks
         r.onLeave = function () { sess.leave(); if (r.releaseLock) r.releaseLock(); setTimeout(function () { sess.end(); }, 5000); };
         sess.on('status', function (ev) {
           if (room !== r) return;
@@ -1006,6 +1008,8 @@
           addTile(r, ev.speaker);
           hear(ev.speaker, ev.text, ev.chat);
         });
+        // someone is still talking: zoope's AI starts on what they've said so far
+        sess.on('partial', function (ev) { if (room === r) preview(r, ev.speaker, ev.text); });
         sess.on('chatSent', function (ev) { if (room === r && !ev.ok) sys('Couldn\'t post in the meeting chat.'); });
         sess.on('log', function (ev) {
           if (/^(captions|chat box)/.test(ev.text) && room === r) sys(ev.text.replace(/^captions: /, ''));
@@ -1033,9 +1037,10 @@
     document.querySelector('.ext-steps').classList.add('hidden');
   });
   // which version of zoope this is, so an outdated copy of the site is easy to spot
-  var BUILD = '2026-10-03 · AI v11';
+  var BUILD = '2026-10-03 · AI v12';
   $('buildTag').textContent = BUILD;
   ZoopeBrain.onStatus(function (st) {
+    if (st.state === 'ready' && room) ZoopeBrain.warm(aiPersona(room));
     // a banner in the meeting room whenever the AI isn't ready, so it's clear why replies are simple
     var ban = $('aiBanner');
     ban.classList.toggle('hidden', st.state === 'ready');
@@ -1198,13 +1203,40 @@
     r.t0 = Date.now(); r.timed = false;
     var d = r.engine.hear(speaker, text);
     logDecision(d);
+    // an answer the AI started while this line was still being said: used if it was for exactly these words
+    var spec = r.spec, task = d.summon ? 'summon' : 'reply';
+    r.spec = null;
+    var useSpec = d.speak && spec && spec.commit && spec.speaker === speaker && spec.task === task && sameWords(spec.text, text);
+    if (spec && !useSpec && spec.control.cancel) spec.control.cancel();
     if (!d.speak) return;
     var directedQ = r.engine.isQuestion(text) && (d.addressed || d.oneOnOne);
-    respondWithAI(r, { task: d.summon ? 'summon' : 'reply', speaker: speaker, text: text, oneOnOne: d.oneOnOne }, d).then(function (res) {
+    var gopts = { task: task, speaker: speaker, text: text, oneOnOne: d.oneOnOne };
+    (useSpec ? inTurn(r, function () { return spec.commit(d); }) : respondWithAI(r, gopts, d)).then(function (res) {
       if (room !== r) return;
       // the notes didn't cover it (or no reply could be made): it waits on the user
       if (res && res.ask || !res && directedQ) { r.engine.followUp(speaker, text); maybePing(r, d); }
     });
+  }
+
+  /*
+   * Someone is still talking. If zoope would answer what they've said so far, its AI starts writing the
+   * answer now, held back; when the finished line has the same words, the answer is spoken at once
+   * (otherwise it is dropped). Chrome's AI and the GPU run side by side, so this costs nothing; on the
+   * CPU a dropped answer would hold up the next one, so it waits for the finished line there.
+   */
+  function preview(r, speaker, text) {
+    if (!ZoopeBrain.ready() || ZoopeBrain.status().device === 'wasm' || r.aiBusy || r.speaking) return;
+    if (r.spec && r.spec.speaker === speaker && sameWords(r.spec.text, text)) return;
+    if (r.spec && r.spec.control.cancel) r.spec.control.cancel();
+    r.spec = null;
+    var d = r.engine.peek(speaker, text);
+    if (!d.speak) return;
+    r.spec = { speaker: speaker, text: text, control: {} };
+    generateReply(r, { task: d.summon ? 'summon' : 'reply', speaker: speaker, text: text, oneOnOne: d.oneOnOne }, null, r.spec);
+  }
+  function sameWords(a, b) {
+    var f = function (x) { return String(x).toLowerCase().replace(/[^a-z0-9' ]/g, ' ').replace(/\s+/g, ' ').trim(); };
+    return f(a) === f(b);
   }
 
   /*
@@ -1214,38 +1246,42 @@
    * gopts: { task: 'reply' | 'summon' | 'join' | 'relay', speaker, text, oneOnOne }
    */
   function respondWithAI(r, gopts, decision) {
-    // one reply at a time, so each reply knows what zoope just said
-    var run = (r.aiChain || Promise.resolve()).then(function () { return room === r ? generateReply(r, gopts, decision) : null; });
-    r.aiChain = run.catch(function () {});
+    return inTurn(r, function () { return generateReply(r, gopts, decision); });
+  }
+  // one reply at a time, so each reply knows what zoope just said
+  function inTurn(r, fn) {
+    r.aiBusy = (r.aiBusy || 0) + 1;
+    var run = (r.aiChain || Promise.resolve()).then(function () { return room === r ? fn() : null; });
+    r.aiChain = run.catch(function () {}).then(function () { r.aiBusy--; });
     return run;
   }
-  function generateReply(r, gopts, decision) {
-    if (!ZoopeBrain.ready()) { aiNotReady(r); return Promise.resolve(null); }
+  // spec: an early answer (see preview()): written now, spoken only once spec.commit(decision) is called
+  function generateReply(r, gopts, decision, spec) {
+    if (!ZoopeBrain.ready()) { if (!spec) aiNotReady(r); return Promise.resolve(null); }
     var p = state.profile;
     var notes = (p.notes || []).map(function (n) { return n.text; }).concat(r.meeting.demo && !(p.notes || []).length ? [SAMPLE_KNOWLEDGE] : []);
     var hist = r.engine.history;
-    var first = true, rest = [];
-    r.thinking = true;
-    return ZoopeBrain.generate(Object.assign({
-      name: r.engine.preferred, fullName: p.fullName, notes: notes,
-      // the line being answered is passed separately, so leave that exact entry out of the history
-      history: hist.filter(function (h, i) {
-        if (h.ai || h.speaker !== gopts.speaker || h.text !== gopts.text) return true;
-        for (var j = i + 1; j < hist.length; j++) if (!hist[j].ai && hist[j].speaker === gopts.speaker && hist[j].text === gopts.text) return true;
-        return false;
-      }),
-      style: p.style, instructions: p.instructions,
-      shares: r.engine.sharesToMention().map(function (n) { return n.text; }),
-      firstTimeout: ZoopeBrain.status().device === 'webgpu' ? 10000 : 20000
-    }, gopts), function (sentence) {
+    var held = !!spec, early = [], pending = [], talking = false, firstSaid = false;
+    if (!spec) r.thinking = true;
+    // the first piece is spoken the moment it's written; what's written while it plays follows as one
+    // smooth utterance as soon as it ends (so there is no wait for the whole reply, and no gap)
+    var pump = function () {
+      if (talking || !pending.length || room !== r) return;
+      talking = true;
+      var text = pending.splice(0).join(' ');
+      aiSay(text, firstSaid ? { noPause: true } : null).then(function () { talking = false; pump(); });
+      firstSaid = true;
+    };
+    var deliver = function (sentence) {
       if (room !== r) return;
       r.thinking = false;
-      // the first sentence is spoken right away; the rest follows as one smooth utterance
-      if (first) { first = false; aiSay(sentence); } else rest.push(sentence);
-    }).then(function (res) {
+      pending.push(sentence);
+      pump();
+    };
+    var wrapUp = function (res) {
       r.thinking = false;
       if (room !== r) return null;
-      if (rest.length) aiSay(rest.join(' '), { noPause: true });
+      pump();
       if (!res) {
         var err = ZoopeBrain.lastError();
         if (err && !r.aiErrorShown) { r.aiErrorShown = true; sys('The AI engine hit an error (' + err + '), so zoope stayed quiet.'); }
@@ -1254,7 +1290,32 @@
       var said = res.said.join(' ');
       if (said) { r.engine.said(said, decision); r.engine.markShared(said); }
       return res;
-    });
+    };
+    var gen = ZoopeBrain.generate(Object.assign(aiPersona(r), {
+      notes: notes,
+      // the line being answered is passed separately, so leave that exact entry out of the history
+      history: hist.filter(function (h, i) {
+        if (h.ai || h.speaker !== gopts.speaker || h.text !== gopts.text) return true;
+        for (var j = i + 1; j < hist.length; j++) if (!hist[j].ai && hist[j].speaker === gopts.speaker && hist[j].text === gopts.text) return true;
+        return false;
+      }),
+      shares: r.engine.sharesToMention().map(function (n) { return n.text; }),
+      firstTimeout: ZoopeBrain.status().device === 'webgpu' ? 10000 : 20000,
+      control: spec ? spec.control : null
+    }, gopts), function (sentence) { if (held) early.push(sentence); else deliver(sentence); });
+    if (!spec) return gen.then(wrapUp);
+    spec.task = gopts.task;
+    spec.commit = function (d) {
+      decision = d; held = false;
+      if (early.length) early.splice(0).forEach(deliver); else r.thinking = true;
+      return gen.then(wrapUp);
+    };
+    return gen;
+  }
+  // who zoope is, for the AI (the same all meeting, so the AI can keep it loaded)
+  function aiPersona(r) {
+    var p = state.profile;
+    return { name: r.engine.preferred, fullName: p.fullName, style: p.style, instructions: p.instructions };
   }
   function aiNotReady(r) {
     if (r.aiWaitShown) return;

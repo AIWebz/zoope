@@ -325,6 +325,9 @@ export function attach(canvas, face, getLevel, opts = {}) {
 
     // 2D deformation (jaw, lips, lids, eyes) in photo space, then head rotation with depth
     const UPPER_SET = new Set(UPPER_LIP);
+    // the lower lip (inner and outer edge): rises toward the upper teeth for "f", "v", "s"
+    const LOWER_SET = new Set(LOWER_LIP_INNER.concat([146, 91, 181, 84, 17, 314, 405, 321, 375]));
+    let asymS = 0, asymT = 0;
     const deform = (open, blink) => {
       const drop = M.faceH * 0.052 * Math.pow(Math.max(0, open), 1.1);
       const [mcx, mcy] = M.mouthC, mw = M.mouthW;
@@ -333,7 +336,8 @@ export function attach(canvas, face, getLevel, opts = {}) {
       for (let i = 0; i < M.N; i++) {
         let x = M.pts[i][0], y = M.pts[i][1];
         const jw = M.jawW[i];
-        if (jw) y += drop * jw;
+        // real jaws open a touch unevenly, and the side changes now and then
+        if (jw) y += drop * jw * (1 + 0.1 * asymS * clamp((x - M.mouthC[0]) / (M.mouthW * 0.5), -1, 1)) * (LOWER_SET.has(i) ? 1 - 0.45 * teethS : 1);
         if (i < M.n) {
           const dx = (x - mcx) / (mw * 1.15), dy = (y - mcy) / (mw * 0.85), d = Math.sqrt(dx * dx + dy * dy);
           if (d < 1) {
@@ -390,6 +394,7 @@ export function attach(canvas, face, getLevel, opts = {}) {
       wideS += ((sh.wide || 0) - wideS) * ease(0.11);
       roundS += ((sh.round || 0) - roundS) * ease(0.11);
       teethS += ((sh.teeth || 0) - teethS) * ease(0.06);
+      asymS += (asymT - asymS) * ease(0.5);
       // expression: the line's smile while speaking; while listening it drifts gently, as faces do
       if (now > nextMood) { idleSmile = Math.random() < 0.5 ? 0 : 0.05 + Math.random() * 0.15; nextMood = now + 4000 + Math.random() * 6000; }
       const speakingNow = (sh.open || 0) > 0.02 || s - talkT < 0.8;
@@ -400,6 +405,7 @@ export function attach(canvas, face, getLevel, opts = {}) {
       const level = mouth;
       if (target > 0.3 && !inSyl) {
         inSyl = true; sylAmp = 0.8 + Math.random() * 0.3;
+        if (Math.random() < 0.3) asymT = (Math.random() - 0.5) * 2;
         // stressed syllables: a small nod and sometimes a brow lift, like a speaker's beat gestures
         if (target > 0.5) {
           nodV += 0.005 + Math.random() * 0.006;

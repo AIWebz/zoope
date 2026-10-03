@@ -115,6 +115,16 @@
     while ((m = re.exec(b))) if (b.slice(0, m.index + 1).trim().split(/\s+/).length >= 2) return m.index;
     return -1;
   }
+  // the end of a first clause worth speaking on its own ("The redesign is about 80% done,"): at least
+  // four words, then a comma, semicolon or colon and more words already coming
+  function clauseEnd(b) {
+    var re = /[,;:](?=\s+\S)/g, m;
+    while ((m = re.exec(b))) {
+      var before = b.slice(0, m.index).trim().split(/\s+/);
+      if (before.length >= 4 && !/\[ASK/i.test(b.slice(0, m.index))) return m.index;
+    }
+    return -1;
+  }
   // Broken output rather than language (same rules as garbled() in aicore.js).
   function garbled(text) {
     var t = String(text || '').trim();
@@ -159,10 +169,29 @@
     return A.length >= 3 && hit / A.length >= 0.8;
   }
 
+  function systemPrompt(opts) {
+    var name = opts.name, full = opts.fullName || name;
+    return 'You are ' + full + ', talking on a live video call. Speak in the first person, naturally, like a real person: ' +
+      'one to three short sentences that respond to what was just said. Style: ' + (STYLES[opts.style] || STYLES.friendly) + '.' +
+      (opts.instructions ? ' ' + opts.instructions : '') + '\n' +
+      'Answer right away: put the answer first. Do not repeat yourself and do not use filler. If something is unclear, ask a short question.\n' +
+      'Facts about your own work, plans, schedule and numbers come only from your notes. ' +
+      'If asked about your own work or plans and your notes do not say, start with [ASK] and say you will check and get back to them. ' +
+      'Make no promises. If someone sincerely asks whether you are an AI, say you are ' + name + '\'s AI avatar.';
+  }
+  // Gets the AI ready for this meeting's replies ahead of time (Chrome's AI keeps the system prompt loaded).
+  function warm(opts) {
+    if (state !== 'ready') return;
+    var sys = systemPrompt(opts);
+    if (mode === 'nano') global.ZoopeNano.warm(sys).catch(function () {});
+    else if (mode === 'ext' && global.ZoopeBridge.ai.warm) global.ZoopeBridge.ai.warm(sys);
+  }
+
   /*
    * Generates what zoope says and calls onSentence(text) for each sentence as soon as it's ready.
    * opts: { task: 'reply' | 'summon' | 'join' | 'relay', name, fullName, speaker, text, notes: [string],
-   *         history: [{speaker, text, ai}], style, instructions, shares: [string], oneOnOne, firstTimeout }
+   *         history: [{speaker, text, ai}], style, instructions, shares: [string], oneOnOne, firstTimeout,
+   *         control: {} (gets control.cancel(), which stops the reply and resolves it to null) }
    * Resolves to { said: [sentences], ask: bool } or null when the model isn't ready / produced nothing.
    */
   var GARBLED = { garbled: true };
@@ -187,36 +216,35 @@
       qw.forEach(function (w) { if (nw.indexOf(w) >= 0) hit++; });
       return { n: n, hit: hit };
     }).sort(function (a, b) { return b.hit - a.hit; }).slice(0, 5).map(function (x) { return x.n; });
-    var history = (opts.history || []).slice(-14);
+    // a shorter prompt starts replying sooner: on the CPU, keep fewer lines of the conversation
+    var history = (opts.history || []).slice(device === 'wasm' ? -8 : -14);
     var mine = history.filter(function (h) { return h.ai; }).map(function (h) { return h.text; });
     var now = new Date();
-    var sys = 'You are ' + full + ', talking on a live video call. Speak in the first person, naturally, like a real person: ' +
-      'one to three short sentences that respond to what was just said. Style: ' + (STYLES[opts.style] || STYLES.friendly) + '.' +
-      (opts.instructions ? ' ' + opts.instructions : '') + '\n' +
-      'Do not repeat yourself and do not use filler. If something is unclear, ask a short question. ' +
-      'It is ' + now.toLocaleString(undefined, { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '.\n' +
-      (notes.length ? 'Your notes (the only source for facts about your own work and plans):\n' + notes.map(function (n) { return '- ' + n; }).join('\n') + '\n' : '') +
-      ((opts.shares || []).length ? 'Bring this up when it fits:\n' + opts.shares.map(function (n) { return '- ' + n; }).join('\n') + '\n' : '') +
-      'If asked about your own work or plans and your notes do not say, start with [ASK] and say you will check and get back to them. ' +
-      'Make no promises. If someone sincerely asks whether you are an AI, say you are ' + name + '\'s AI avatar.';
+    // the system prompt stays the same all meeting, so Chrome's AI can keep it loaded (see nano.js);
+    // what changes (time, notes, conversation) goes in the user message
+    var sys = systemPrompt(opts);
     var convo = history.map(function (h) { return (h.ai ? full.split(' ')[0] + ' (you)' : h.speaker) + ': ' + h.text; }).join('\n');
     var askLine = task === 'summon' ? opts.speaker + ' just said your name to get your attention. Reply with a very short acknowledgement so they go on.'
       : task === 'join' ? 'You just joined the call. Say a short hello.'
       : task === 'relay' ? 'Tell the meeting this in your own words, keeping every fact exactly: "' + opts.text + '"'
       : opts.speaker + ' said: "' + opts.text + '"' + (opts.oneOnOne ? ' (just the two of you are on the call)' : '') + '\nReply to ' + opts.speaker + '.';
-    var user = (convo ? 'Conversation so far:\n' + convo + '\n\n' : '') + askLine;
+    var context = 'It is ' + now.toLocaleString(undefined, { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '.\n' +
+      (notes.length ? 'Your notes (the only source for facts about your own work and plans):\n' + notes.map(function (n) { return '- ' + n; }).join('\n') + '\n' : 'You have no notes about your own work and plans.\n') +
+      ((opts.shares || []).length ? 'Bring this up when it fits:\n' + opts.shares.map(function (n) { return '- ' + n; }).join('\n') + '\n' : '');
+    var user = context + '\n' + (convo ? 'Conversation so far:\n' + convo + '\n\n' : '') + askLine;
     var known = ' ' + notes.concat(opts.shares || [], history.map(function (h) { return h.speaker + ' ' + h.text; }), [name, full, opts.speaker || '', opts.text || '']).join(' ').toLowerCase() + ' ';
     var maxSentences = task === 'reply' || task === 'relay' ? 3 : 1;
 
     return new Promise(function (resolve) {
-      var id = ++seq, buf = '', spoken = [], ask = false, finished = false, firstTimer, gotToken = false, isGarbled = false;
+      var id = ++seq, buf = '', spoken = [], sentences = 0, ask = false, finished = false, firstTimer, gotToken = false, isGarbled = false;
       var finish = function (val) {
         if (finished) return;
         finished = true; clearTimeout(firstTimer); delete handlers[id];
         resolve(val);
       };
       var stop = function () { send({ id: id, kind: 'stop' }); };
-      var take = function (sentence) {
+      if (opts.control) opts.control.cancel = function () { if (!finished) { stop(); finish(null); } };
+      var take = function (sentence, clause) {
         var t = sentence.replace(/^\s*["“]|["”]\s*$/g, '').replace(/^(You|Me|[A-Z][a-z]+( \(you\))?):\s*/, '').trim();
         // broken output is never spoken
         if (garbled(t) || garbled(spoken.concat([t]).join(' '))) { isGarbled = true; stop(); return false; }
@@ -228,7 +256,7 @@
         spoken.push(t);
         clearTimeout(firstTimer);
         onSentence(t);
-        if (spoken.length >= maxSentences) { stop(); return false; } // keep turns short, like people do
+        if (!clause && ++sentences >= maxSentences) { stop(); return false; } // keep turns short, like people do
         return true;
       };
       handlers[id] = function (m) {
@@ -246,6 +274,12 @@
             buf = buf.slice(end + 1);
             if (!take(sent)) { finish(isGarbled ? GARBLED : { said: spoken, ask: ask }); return; }
           }
+          // a long first sentence: its first clause is spoken as soon as it's written, the rest follows
+          if (!spoken.length && (end = clauseEnd(buf)) >= 0) {
+            var cl = buf.slice(0, end + 1);
+            buf = buf.slice(end + 1);
+            if (!take(cl, true)) { finish(isGarbled ? GARBLED : { said: spoken, ask: ask }); return; }
+          }
         } else if (m.kind === 'done' || m.kind === 'error') {
           if (m.kind === 'error') { lastError = m.message; if (window.console) console.warn('[zoope AI]', m.message, m.stack || ''); }
           if (m.kind === 'done' && buf.trim()) take(buf);
@@ -262,7 +296,7 @@
   watchExtension();
 
   global.ZoopeBrain = {
-    load: load, generate: generate,
+    load: load, generate: generate, warm: warm,
     ready: function () { return state === 'ready'; },
     status: function () { return { state: state, device: device, model: model, progress: progress, error: lastError, source: source }; },
     lastError: function () { return lastError; },

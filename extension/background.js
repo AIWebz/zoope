@@ -171,6 +171,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         chrome.runtime.sendMessage({ type: 'aiToEngine', msg: { id: tab + ':' + msg.id, kind: 'ask', messages: msg.messages, maxTokens: msg.maxTokens } }).catch(() => {});
         return { ok: true };
       }
+      case 'aiWarm':
+        // get Chrome's AI ready for this meeting's replies ahead of time
+        if (await nanoAvailable()) self.ZoopeNano.warm(msg.system).catch(() => {});
+        return { ok: true };
       case 'aiGarbled':
         // a zoope tab saw broken output: the engine moves to its next mode
         await setAiStatus({ state: 'loading', progress: 1, error: '' });

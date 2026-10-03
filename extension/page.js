@@ -51,6 +51,9 @@
       const pc = new RTC({ iceServers: [] });
       const tr = pc.addTransceiver('audio', { direction: 'recvonly' });
       const audio = tr.receiver.track;
+      // a local link needs no jitter buffer: play the voice as soon as it arrives (less delay)
+      try { tr.receiver.jitterBufferTarget = 0; } catch (e) { /* older Chrome */ }
+      try { tr.receiver.playoutDelayHint = 0; } catch (e) { /* not supported */ }
       // remote audio only flows once something consumes it
       const sink = new Audio();
       sink.muted = true;
@@ -64,6 +67,18 @@
         } catch (err) { tell('log', 'signal: ' + err.message); }
       };
       pc.onconnectionstatechange = () => tell('log', 'voice link ' + pc.connectionState);
+      // how late the voice plays here (one 20 ms audio frame plus the jitter buffer), so the avatar's
+      // mouth can be timed to the voice the meeting hears
+      let lastDelay = 0, lastCount = 0;
+      setInterval(() => {
+        if (pc.connectionState !== 'connected') return;
+        pc.getStats(tr.receiver.track).then((stats) => stats.forEach((st) => {
+          if (st.type !== 'inbound-rtp' || st.kind !== 'audio' || !st.jitterBufferEmittedCount) return;
+          const n = st.jitterBufferEmittedCount - lastCount, d = st.jitterBufferDelay - lastDelay;
+          lastCount = st.jitterBufferEmittedCount; lastDelay = st.jitterBufferDelay;
+          if (n > 0) tell('lag', Math.round(20 + (d / n) * 1000 - 30)); // minus the lips' ~30 ms lead
+        })).catch(() => {});
+      }, 1000);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       tell('signal', { sdp: { type: offer.type, sdp: offer.sdp } });

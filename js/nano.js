@@ -9,6 +9,10 @@
  * ZoopeNano.download(onProgress)          → starts Chrome's download of the model (needs a click)
  * ZoopeNano.ask(id, messages, post)       → streams { id, kind: 'token' | 'done' | 'error' } to post()
  * ZoopeNano.stop(id)
+ * ZoopeNano.warm(system)                  → gets a session with this system prompt ready ahead of time
+ *
+ * Speed: making a session reads the system prompt and can load the model, which takes a while.
+ * So one session per system prompt is kept warm, and each reply runs in a clone of it (instant).
  */
 (function (g) {
   'use strict';
@@ -34,6 +38,30 @@
     }, LANG)).then(function (s) { s.destroy(); return true; });
   }
 
+  // the warm session for the current system prompt
+  var base = { key: null, p: null };
+  function warm(sys) {
+    var lm = LM();
+    if (!lm) return Promise.reject(new Error('this browser has no built-in AI'));
+    sys = sys || '';
+    if (base.key === sys && base.p) return base.p;
+    var old = base.p;
+    if (old) old.then(function (s) { try { s.destroy(); } catch (e) { /* gone */ } }, function () {});
+    base.key = sys;
+    base.p = lm.create(Object.assign({ initialPrompts: sys ? [{ role: 'system', content: sys }] : [] }, LANG));
+    base.p.catch(function () { if (base.key === sys) { base.key = null; base.p = null; } });
+    return base.p;
+  }
+  // a fresh session for one reply: a clone of the warm one, or a new one if cloning isn't possible
+  function sessionFor(sys, signal) {
+    var lm = LM();
+    var fresh = function () { return lm.create(Object.assign({ initialPrompts: sys ? [{ role: 'system', content: sys }] : [], signal: signal }, LANG)); };
+    return warm(sys).then(function (b) {
+      if (!b.clone) return fresh();
+      return b.clone({ signal: signal }).catch(function () { base.key = null; base.p = null; return fresh(); });
+    }, fresh);
+  }
+
   function ask(id, messages, post) {
     var lm = LM();
     if (!lm) { post({ id: id, kind: 'error', message: 'this browser has no built-in AI' }); return Promise.resolve(); }
@@ -41,7 +69,7 @@
     var user = messages.filter(function (m) { return m.role !== 'system'; }).map(function (m) { return m.content; }).join('\n');
     var ctl = new AbortController(), session = null;
     running[id] = ctl;
-    return lm.create(Object.assign({ initialPrompts: sys ? [{ role: 'system', content: sys }] : [], signal: ctl.signal }, LANG)).then(function (s) {
+    return sessionFor(sys, ctl.signal).then(function (s) {
       session = s;
       var stream = s.promptStreaming(user, { signal: ctl.signal });
       var reader = stream.getReader(), sofar = '';
@@ -70,5 +98,5 @@
 
   function stop(id) { if (running[id]) { try { running[id].abort(); } catch (e) { /* done */ } } }
 
-  g.ZoopeNano = { status: status, download: download, ask: ask, stop: stop };
+  g.ZoopeNano = { status: status, download: download, ask: ask, stop: stop, warm: function (sys) { return warm(sys).then(function () { return true; }); } };
 })(typeof self !== 'undefined' ? self : window);

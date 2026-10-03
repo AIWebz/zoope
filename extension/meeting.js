@@ -28,10 +28,13 @@
     else if (d.type === 'canvas') toPage('reply', await avatarCanvas(), d.id);
     else if (d.type === 'signal') send({ type: 'signal', data: d.data });
     else if (d.type === 'log') send({ type: 'log', text: String(d.data) });
+    else if (d.type === 'lag') LAG += (Math.max(0, Math.min(1000, Number(d.data) || 0)) - LAG) * 0.6; // smoothed, so the lips never jump
   });
 
   // ---- the avatar, drawn into a canvas the page turns into its camera
-  const LAG = 40; // ms: WebRTC delay on the voice, minus the lips' natural lead
+  // ms the voice reaches this tab after zoope's tab plays it (the WebRTC link), minus the lips'
+  // natural lead; page.js measures the link and keeps this up to date
+  let LAG = 40;
   let envelopes = [];
   const REST = { open: 0, wide: 0, round: 0, teeth: 0 };
   function mouthLevel() {
@@ -88,7 +91,9 @@
     draw();
   }
 
-  // ---- captions: a line is finished when its text stops changing
+  // ---- captions: a line is finished when its text stops changing.
+  // While someone is still talking, the words so far go to zoope as a 'partial' line, so its AI can
+  // start writing the answer before they finish; the finished line then confirms (or replaces) it.
   const lines = new Map();
   let selfNames = [];
   function readCaptions() {
@@ -98,19 +103,21 @@
     items.forEach((it) => {
       if (!it.text) return;
       let r = lines.get(it.el);
-      if (!r) { r = { text: '', said: '', speaker: it.speaker, changed: now }; lines.set(it.el, r); }
+      if (!r) { r = { text: '', said: '', partial: '', speaker: it.speaker, changed: now }; lines.set(it.el, r); }
       if (it.text !== r.text) { r.text = it.text; r.speaker = it.speaker || r.speaker; r.changed = now; }
     });
     lines.forEach((r, el) => {
-      const gone = !el.isConnected;
-      const ended = /[.?!]$/.test(r.text);
-      if (gone || now - r.changed > (ended ? 280 : 650)) flush(r);
+      const gone = !el.isConnected, quiet = now - r.changed;
+      // a question mark ends a line almost at once; other punctuation quickly; no punctuation after a pause
+      const wait = /\?$/.test(r.text) ? 120 : /[.!]$/.test(r.text) ? 220 : 520;
+      if (gone || quiet > wait) flush(r);
+      else if (quiet > 200) preview(r);
       if (gone) lines.delete(el);
     });
   }
-  function flush(r) {
-    if (r.text.length <= r.said.length && r.text.startsWith(r.said)) return;
-    // only the words not sent yet (captions grow as people keep talking, and get corrected)
+  // the words of a caption line not sent yet (captions grow as people keep talking, and get corrected)
+  function freshOf(r) {
+    if (r.text.length <= r.said.length && r.text.startsWith(r.said)) return '';
     let fresh = r.text;
     if (r.said && r.text.startsWith(r.said)) fresh = r.text.slice(r.said.length);
     else if (r.said) {
@@ -119,15 +126,27 @@
       while (k < a.length && k < b.length && a[k] === b[k]) k++;
       fresh = b.slice(Math.max(k, a.length)).join(' ');
     }
-    r.said = r.text;
     fresh = U.norm(fresh);
-    if (fresh.replace(/[^a-z0-9]/gi, '').length < 2) return;
-    // Meet and Teams label this tab's own captions "You". A caption under the user's name is someone
-    // else (often the user joining from another device) unless zoope is speaking right now (an echo).
+    return fresh.replace(/[^a-z0-9]/gi, '').length < 2 ? '' : fresh;
+  }
+  // Meet and Teams label this tab's own captions "You". A caption under the user's name is someone
+  // else (often the user joining from another device) unless zoope is speaking right now (an echo).
+  function isSelf(r) {
     const now2 = Date.now();
     const speaking = envelopes.some((e) => now2 > e.at - 300 && now2 < e.at + (e.shapes || e.levels).length * e.step + 2500);
-    const self = /^you\b/i.test(r.speaker) || (speaking && selfNames.indexOf(String(r.speaker).toLowerCase()) >= 0);
-    send({ type: 'caption', speaker: r.speaker || 'Someone', text: fresh, self });
+    return /^you\b/i.test(r.speaker) || (speaking && selfNames.indexOf(String(r.speaker).toLowerCase()) >= 0);
+  }
+  function preview(r) {
+    const fresh = freshOf(r);
+    if (!fresh || fresh === r.partial || fresh.split(/\s+/).length < 3 || isSelf(r)) return;
+    r.partial = fresh;
+    send({ type: 'partial', speaker: r.speaker || 'Someone', text: fresh });
+  }
+  function flush(r) {
+    const fresh = freshOf(r);
+    r.said = r.text; r.partial = '';
+    if (!fresh) return;
+    send({ type: 'caption', speaker: r.speaker || 'Someone', text: fresh, self: isSelf(r) });
   }
 
   // ---- chat messages from people in the meeting: forwarded to zoope's AI like spoken lines
@@ -200,7 +219,7 @@
         captionsState = P.captionsOn();
         if (captionTries === 12 && captionsState !== 'on') send({ type: 'log', text: 'captions: could not turn them on; turn on captions in the meeting so zoope can follow it' });
       }
-      if (!captionTimer) captionTimer = setInterval(() => { try { readCaptions(); readChat(); } catch (e) { /* page changing */ } }, 150);
+      if (!captionTimer) captionTimer = setInterval(() => { try { readCaptions(); readChat(); } catch (e) { /* page changing */ } }, 100);
       // open the chat panel once, so its messages are on the page to be read
       if (!chatOpened && Date.now() - joinedAt > 4000) { chatOpened = true; if (!P.chat.input()) U.click(U.find(P.chat.open)); }
       return;
