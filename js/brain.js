@@ -169,11 +169,17 @@
     return A.length >= 3 && hit / A.length >= 0.8;
   }
 
-  function systemPrompt(opts) {
+  // compact: for zoope's own small model on the processor, where every word of the prompt costs time
+  function systemPrompt(opts, compact) {
     var name = opts.name, full = opts.fullName || name;
+    var style = 'Style: ' + (STYLES[opts.style] || STYLES.friendly) + '.' + (opts.instructions ? ' ' + opts.instructions : '');
+    if (compact) {
+      return 'You are ' + full + ' on a live video call. Reply like a real person: casual, one or two short sentences, answer first. ' + style + '\n' +
+        'Facts about your own work and plans come only from your notes; if they do not say, start with [ASK] and say you will check. ' +
+        'If someone sincerely asks whether you are an AI, say you are ' + name + '\'s AI avatar.';
+    }
     return 'You are ' + full + ', talking with colleagues on a live video call. Talk exactly like a real person on a call: ' +
-      'casual spoken English with contractions, one to three short sentences that respond to what was just said. Style: ' + (STYLES[opts.style] || STYLES.friendly) + '.' +
-      (opts.instructions ? ' ' + opts.instructions : '') + '\n' +
+      'casual spoken English with contractions, one to three short sentences that respond to what was just said. ' + style + '\n' +
       'Answer right away: put the answer first. A natural opener like "Yeah,", "So,", "Hmm," or "Oh," is fine now and then, never the same one twice in a row. ' +
       'Never sound like an assistant or a chatbot: no "Great question", no "Certainly", no "I\'d be happy to help", no offers of more help, no lists, no emojis, no formal sign-offs. ' +
       'Do not repeat yourself. If something is unclear, ask a short question back, as people do.\n' +
@@ -212,13 +218,20 @@
    * Resolves to { said: [sentences], ask: bool } or null when the model isn't ready / produced nothing.
    */
   var GARBLED = { garbled: true };
+  // opts.deadline (a Date.now() time): if nothing can be said by then, zoope gives up on this reply,
+  // since an answer that comes long after the question sounds wrong (people answer in seconds)
   function generate(opts, onSentence) {
     return attempt(opts, onSentence).then(function (res) {
       if (res !== GARBLED) return res;
-      // the model wrote word salad: switch the engine to its next mode, then try this reply once more
+      var left = (opts.deadline || Date.now() + 120000) - Date.now();
+      // Chrome's AI doesn't break the way a small model on a bad GPU does: just try once more, at once
+      if (device === 'chrome-ai') return left > 1500 ? attempt(opts, onSentence).then(function (r2) { return r2 === GARBLED ? null : r2; }) : null;
+      // the model wrote word salad: switch the engine to its next mode (for the next replies);
+      // this reply is tried again only if there is still time
       reportGarbled();
-      return waitReady(120000).then(function (ok) {
-        if (!ok) return null;
+      if (left < 3000) return null;
+      return waitReady(left).then(function (ok) {
+        if (!ok || Date.now() > opts.deadline) return null;
         return attempt(opts, onSentence).then(function (r2) { if (r2 === GARBLED) { reportGarbled(); return null; } return r2; });
       });
     });
@@ -226,32 +239,36 @@
   function attempt(opts, onSentence) {
     if (state !== 'ready') return Promise.resolve(null);
     var name = opts.name, task = opts.task || 'reply', full = opts.fullName || name;
+    // zoope's own model on the processor is slow: shorter prompts and replies there
+    var cpu = device === 'wasm';
     // the notes that relate to what was said first (a shorter prompt starts replying sooner)
     var qw = (String(opts.text || '').toLowerCase().match(/[a-z0-9]{3,}/g) || []);
     var notes = (opts.notes || []).map(function (n) {
       var nw = String(n).toLowerCase(), hit = 0;
       qw.forEach(function (w) { if (nw.indexOf(w) >= 0) hit++; });
       return { n: n, hit: hit };
-    }).sort(function (a, b) { return b.hit - a.hit; }).slice(0, 5).map(function (x) { return x.n; });
+    }).sort(function (a, b) { return b.hit - a.hit; }).slice(0, cpu ? 3 : 5).map(function (x) { return x.n; });
     // a shorter prompt starts replying sooner: on the CPU, keep fewer lines of the conversation
-    var history = (opts.history || []).slice(device === 'wasm' ? -8 : -14);
+    var history = (opts.history || []).slice(cpu ? -6 : -14);
     var mine = history.filter(function (h) { return h.ai; }).map(function (h) { return h.text; });
     var now = new Date();
     // the system prompt stays the same all meeting, so Chrome's AI can keep it loaded (see nano.js);
     // what changes (time, notes, conversation) goes in the user message
-    var sys = systemPrompt(opts);
+    var sys = systemPrompt(opts, cpu);
     var convo = history.map(function (h) { return (h.ai ? full.split(' ')[0] + ' (you)' : h.speaker) + ': ' + h.text; }).join('\n');
     var askLine = task === 'summon' ? opts.speaker + ' just said your name to get your attention. Reply with a very short acknowledgement so they go on.'
       : task === 'join' ? 'You just joined the call. Say a short hello.'
-      : task === 'relay' ? 'Tell the meeting this in your own words, keeping every fact exactly: "' + opts.text + '"'
+      : task === 'relay' ? 'You want to tell everyone on the call this: "' + opts.text + '". Say it to them now, in one or two natural sentences of your own, ' +
+        'keeping every fact (names, days, times, numbers) exactly. Do not reply to it or acknowledge it; tell it to them.'
       : opts.speaker + ' said: "' + opts.text + '"' + (opts.oneOnOne ? ' (just the two of you are on the call)' : '') + '\nReply to ' + opts.speaker + '.';
     var context = 'It is ' + now.toLocaleString(undefined, { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '.\n' +
       (notes.length ? 'Your notes (the only source for facts about your own work and plans):\n' + notes.map(function (n) { return '- ' + n; }).join('\n') + '\n' : 'You have no notes about your own work and plans.\n') +
       ((opts.shares || []).length ? 'Bring this up when it fits:\n' + opts.shares.map(function (n) { return '- ' + n; }).join('\n') + '\n' : '');
     var user = context + '\n' + (convo ? 'Conversation so far:\n' + convo + '\n\n' : '') + askLine;
     var known = ' ' + notes.concat(opts.shares || [], history.map(function (h) { return h.speaker + ' ' + h.text; }), [name, full, opts.speaker || '', opts.text || '']).join(' ').toLowerCase() + ' ';
-    var maxSentences = task === 'reply' || task === 'relay' ? 3 : 1;
+    var maxSentences = task === 'reply' || task === 'relay' ? (cpu ? 2 : 3) : 1;
 
+    var limit = function (ms) { return opts.deadline ? Math.max(300, Math.min(ms, opts.deadline - Date.now())) : ms; };
     return new Promise(function (resolve) {
       var id = ++seq, buf = '', spoken = [], sentences = 0, ask = false, finished = false, firstTimer, gotToken = false, isGarbled = false;
       var finish = function (val) {
@@ -283,7 +300,16 @@
       handlers[id] = function (m) {
         if (finished) return;
         if (m.kind === 'token') {
-          if (!gotToken) { gotToken = true; clearTimeout(firstTimer); firstTimer = setTimeout(function () { if (!spoken.length && buf.trim()) { take(buf + '.'); buf = ''; } }, 12000); }
+          // too late to start talking now
+          if (!spoken.length && opts.deadline && Date.now() > opts.deadline) { stop(); finish(null); return; }
+          if (!gotToken) {
+            gotToken = true; clearTimeout(firstTimer);
+            firstTimer = setTimeout(function () {
+              if (spoken.length || finished) return;
+              if (opts.deadline && Date.now() >= opts.deadline - 100) { stop(); finish(null); return; }
+              if (buf.trim()) { take(buf + '.'); buf = ''; }
+            }, limit(12000));
+          }
           buf += m.text;
           // a long run without a sentence end: check it isn't word salad before waiting any longer
           if (buf.length > 140 && garbled(buf)) { isGarbled = true; stop(); finish(GARBLED); return; }
@@ -309,11 +335,11 @@
       };
       // if the model produces nothing at all in time, zoope stays quiet rather than say something canned;
       // once it is writing, zoope waits for its sentence
-      firstTimer = setTimeout(function () { if (!gotToken) { stop(); finish(null); } }, opts.firstTimeout || 15000);
+      firstTimer = setTimeout(function () { if (!gotToken || (!spoken.length && opts.deadline)) { stop(); finish(null); } }, limit(opts.firstTimeout || 15000));
       var um = { role: 'user', content: user };
       // Chrome's AI already has the conversation read (see warm()); it only reads the new part
       if (mode === 'nano' || mode === 'ext') { um.lines = convoLines(opts.fullHistory || opts.history, opts); um.short = context + '\n' + askLine; }
-      send({ id: id, kind: 'ask', messages: [{ role: 'system', content: sys }, um], maxTokens: task === 'reply' || task === 'relay' ? 110 : 24 });
+      send({ id: id, kind: 'ask', messages: [{ role: 'system', content: sys }, um], maxTokens: task === 'reply' || task === 'relay' ? (cpu ? 64 : 110) : 24 });
     });
   }
 

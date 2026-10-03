@@ -1042,7 +1042,7 @@
     document.querySelector('.ext-steps').classList.add('hidden');
   });
   // which version of zoope this is, so an outdated copy of the site is easy to spot
-  var BUILD = '2026-10-03 · AI v13';
+  var BUILD = '2026-10-03 · AI v14';
   $('buildTag').textContent = BUILD;
   ZoopeBrain.onStatus(function (st) {
     if (st.state === 'ready' && room) ZoopeBrain.warm(aiPersona(room));
@@ -1053,7 +1053,7 @@
     ban.textContent = st.state === 'loading' ? (st.error ? 'AI engine: ' + st.error + '…' : 'AI engine loading: ' + Math.round(st.progress * 100) + '%. zoope listens but stays quiet until it is ready (first time only; it is saved after).')
       : st.state === 'error' ? 'AI engine not running: ' + (st.error || 'unknown error') + '. zoope listens but stays quiet.'
       : 'AI engine starting…';
-    var text = st.state === 'ready' ? 'AI: ready' + (st.device === 'chrome-ai' ? ' (Chrome AI)' : st.device === 'webgpu' ? ' (GPU)' : '')
+    var text = st.state === 'ready' ? 'AI: ready' + (st.device === 'chrome-ai' ? ' (Chrome AI)' : st.device === 'webgpu' ? ' (GPU)' : ' (CPU, slow)')
       : st.state === 'loading' ? 'AI: loading ' + Math.round(st.progress * 100) + '%'
       : st.state === 'error' ? 'AI: not running' : 'AI: starting';
     ['brainState', 'brainStateNav'].forEach(function (id) {
@@ -1165,6 +1165,7 @@
     var r = room, noPause = opts && opts.noPause, tText = Date.now(), ep = r.epoch || 0;
     r.queue = r.queue.then(function () {
       if (room !== r || ep !== (r.epoch || 0)) return; // someone talked over zoope: this part isn't said
+      if (Date.now() - tText > 20000) return; // stuck behind a slow voice for too long: it would come out of nowhere
       // a short natural pause before speaking; in real calls keep it tight so replies don't lag
       // in a real call the zoope tab is in the background, where Chrome delays timers by up to a second,
       // so the live path uses no timers at all
@@ -1217,6 +1218,7 @@
     if (!d.speak) return;
     var directedQ = r.engine.isQuestion(text) && (d.addressed || d.oneOnOne);
     var gopts = { task: task, speaker: speaker, text: text, oneOnOne: d.oneOnOne, aiCheck: d.intent === 'aicheck' };
+    if (useSpec) r.replySeq = (r.replySeq || 0) + 1; // older replies still waiting are superseded
     (useSpec ? inTurn(r, function () { return spec.commit(d); }) : respondWithAI(r, gopts, d)).then(function (res) {
       if (room !== r) return;
       // the notes didn't cover it (or no reply could be made): it waits on the user
@@ -1238,7 +1240,7 @@
     var d = r.engine.peek(speaker, text);
     if (!d.speak) return;
     r.spec = { speaker: speaker, text: text, control: {} };
-    generateReply(r, { task: d.summon ? 'summon' : 'reply', speaker: speaker, text: text, oneOnOne: d.oneOnOne, aiCheck: d.intent === 'aicheck' }, null, r.spec);
+    generateReply(r, { deadline: Date.now() + 20000, task: d.summon ? 'summon' : 'reply', speaker: speaker, text: text, oneOnOne: d.oneOnOne, aiCheck: d.intent === 'aicheck' }, null, r.spec);
   }
   // Chrome's AI reads each line of the meeting as it's said, so a reply only has to read the question
   function keepReading(r) { ZoopeBrain.warm(Object.assign(aiPersona(r), { history: r.engine.history })); }
@@ -1255,7 +1257,28 @@
    * gopts: { task: 'reply' | 'summon' | 'join' | 'relay', speaker, text, oneOnOne }
    */
   function respondWithAI(r, gopts, decision) {
-    return inTurn(r, function () { return generateReply(r, gopts, decision); });
+    gopts.deadline = gopts.deadline || replyDeadline(gopts.task, Date.now());
+    var seq = gopts.task === 'reply' || gopts.task === 'summon' ? (r.replySeq = (r.replySeq || 0) + 1) : 0;
+    return inTurn(r, function () {
+      // a newer line for zoope came in while this one waited its turn: that one is answered instead
+      if (seq && seq !== r.replySeq) return { said: [], ask: false, skipped: true };
+      // waited too long already: an answer now would come out of nowhere
+      if (Date.now() > gopts.deadline) { lateNotice(r, gopts.task); return null; }
+      return generateReply(r, gopts, decision);
+    });
+  }
+  // How long zoope may take to start a reply: people answer within seconds, so a reply that can't start by
+  // then is dropped (and a question meant for the user pings them instead). Your notes may take longer.
+  function replyDeadline(task, from) {
+    var cpu = ZoopeBrain.status().device === 'wasm';
+    return from + (task === 'join' ? 20000 : task === 'relay' ? 10000 : cpu ? 15000 : 9000);
+  }
+  function lateNotice(r, task) {
+    if (r.lateShown || task === 'relay') return; // a late note is simply said as you wrote it
+    r.lateShown = true;
+    var bs = ZoopeBrain.status();
+    sys('A reply took too long to write, so zoope let it go rather than answer late' +
+      (bs.device === 'wasm' ? '. zoope\'s AI is running on this computer\'s processor, which is slow; Chrome\'s built-in AI or a graphics card replies in about a second (see Setup).' : '.'));
   }
   // one reply at a time, so each reply knows what zoope just said
   function inTurn(r, fn) {
@@ -1300,6 +1323,7 @@
         if (delivered.length) { r.engine.said(delivered.join(' '), decision); keepReading(r); }
         return { said: delivered, ask: false, cut: true };
       }
+      if (!res && Date.now() > (gopts.deadline || Infinity) - 300) { lateNotice(r, gopts.task); return null; }
       if (!res) {
         var err = ZoopeBrain.lastError();
         if (err && !r.aiErrorShown) { r.aiErrorShown = true; sys('The AI engine hit an error (' + err + '), so zoope stayed quiet.'); }
@@ -1321,7 +1345,7 @@
       shares: r.engine.sharesToMention().map(function (n) { return n.text; }),
       firstTimeout: ZoopeBrain.status().device === 'webgpu' ? 10000 : 20000,
       control: control
-    }, gopts), function (sentence) { if (held) early.push(sentence); else deliver(sentence); });
+    }, gopts, { deadline: gopts.deadline || replyDeadline(gopts.task, Date.now()) }), function (sentence) { if (held) early.push(sentence); else deliver(sentence); });
     if (!spec) return gen.then(wrapUp);
     spec.task = gopts.task;
     spec.commit = function (d) {
@@ -1382,9 +1406,16 @@
     sys('Your note: ' + v);
     room.engine.relay(v);
     var r = room;
-    // the AI says it in its own words; without the AI, zoope says your note exactly as you wrote it
-    if (ZoopeBrain.ready()) respondWithAI(r, { task: 'relay', text: v });
-    else { aiSay(v); r.engine.said(v); }
+    // "Note that there's a meeting Thursday" → "there's a meeting Thursday": what to tell them, not an instruction
+    var told = v.replace(/^\s*(please\s+)?(note that|note:|tell (them|everyone|the team)( that)?|let (them|everyone|the team) know( that)?|say( that)?|remind (them|everyone)( that)?|mention( that)?)\s+/i, '');
+    told = told.charAt(0).toUpperCase() + told.slice(1);
+    // the AI says it in its own words; if the AI isn't running or is slow, zoope says it as written
+    if (ZoopeBrain.ready()) {
+      respondWithAI(r, { task: 'relay', text: told }).then(function (res) {
+        if (room === r && !(res && res.said && res.said.length)) { aiSay(told, { noPause: true }); r.engine.said(told); }
+      });
+    }
+    else { aiSay(told); r.engine.said(told); }
   });
 
   $('sayForm').addEventListener('submit', function (e) {
