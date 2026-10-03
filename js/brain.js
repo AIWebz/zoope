@@ -24,6 +24,19 @@
     } else if (worker) worker.postMessage(msg);
   }
   function onEngine(m) { if (handlers[m.id]) handlers[m.id](m); }
+  var readyWaiters = [];
+  function nowReady() { var w = readyWaiters; readyWaiters = []; w.forEach(function (fn) { fn(true); }); }
+  function waitReady(ms) {
+    return new Promise(function (resolve) {
+      readyWaiters.push(resolve);
+      setTimeout(function () { var i = readyWaiters.indexOf(resolve); if (i >= 0) { readyWaiters.splice(i, 1); resolve(false); } }, ms);
+    });
+  }
+  // The output was garbled: ask the engine to switch to its next mode.
+  function reportGarbled() {
+    state = 'loading'; lastError = 'the AI wrote garbled text, so it is switching to another mode'; emit();
+    if (mode === 'ext') global.ZoopeBridge.ai.garbled(); else if (worker) worker.postMessage({ id: 0, kind: 'garbled' });
+  }
 
   /* Use the AI engine installed in the extension (it was connected with the popup's Connect button). */
   function useExtension(st) {
@@ -32,6 +45,7 @@
     state = st.state === 'ready' ? 'ready' : st.state === 'error' ? 'error' : 'loading';
     device = st.device || ''; model = st.model || ''; progress = st.progress || 0; lastError = st.error || '';
     emit();
+    if (state === 'ready') nowReady();
   }
   function watchExtension() {
     var B = global.ZoopeBridge;
@@ -69,7 +83,7 @@
       var m = e.data;
       if (m.id === 0) {
         if (m.kind === 'progress') { progress = m.total ? m.loaded / m.total : 0; emit(); }
-        else if (m.kind === 'ready') { state = 'ready'; device = m.device; model = m.model || ''; emit(); }
+        else if (m.kind === 'ready') { state = 'ready'; device = m.device; model = m.model || ''; lastError = ''; emit(); nowReady(); }
         else if (m.kind === 'error') { state = 'error'; lastError = m.message; if (window.console) console.warn('[zoope AI]', m.message); emit(); retryLater(); }
         return;
       }
@@ -83,6 +97,23 @@
     var re = /[.!?](?=\s|$)/g, m;
     while ((m = re.exec(b))) if (b.slice(0, m.index + 1).trim().split(/\s+/).length >= 2) return m.index;
     return -1;
+  }
+  // Broken output rather than language (same rules as garbled() in aicore.js).
+  function garbled(text) {
+    var t = String(text || '').trim();
+    if (!t) return false;
+    var w = t.split(/\s+/).filter(Boolean);
+    var camel = w.filter(function (x) { return /[a-z][A-Z]/.test(x); }).length;
+    var caps = w.slice(1).filter(function (x) { return /^[A-Z][a-z]/.test(x); }).length;
+    var counts = {}, top = 0;
+    w.forEach(function (x) {
+      var k = x.toLowerCase().replace(/[^a-z0-9']/g, '');
+      if (!k || /^(the|a|an|to|and|i|you|it|of|is|that|in|we|on|for|so)$/.test(k)) return;
+      counts[k] = (counts[k] || 0) + 1; top = Math.max(top, counts[k]);
+    });
+    var longest = Math.max.apply(null, w.map(function (x) { return x.replace(/[^A-Za-z]/g, '').length; }));
+    return camel >= 2 || camel / w.length > 0.15 || (w.length >= 8 && caps / (w.length - 1) > 0.75) ||
+      (w.length >= 8 && top / w.length > 0.25) || longest > 22 || (w.length >= 30 && !/[.!?,;:]/.test(t));
   }
   function words(s) { return String(s).match(/[A-Za-z0-9][\w'%.-]*/g) || []; }
   // a personal claim ("I", "we", "my", "our"…) may only use numbers and names zoope was given
@@ -117,7 +148,19 @@
    *         history: [{speaker, text, ai}], style, instructions, shares: [string], oneOnOne, firstTimeout }
    * Resolves to { said: [sentences], ask: bool } or null when the model isn't ready / produced nothing.
    */
+  var GARBLED = { garbled: true };
   function generate(opts, onSentence) {
+    return attempt(opts, onSentence).then(function (res) {
+      if (res !== GARBLED) return res;
+      // the model wrote word salad: switch the engine to its next mode, then try this reply once more
+      reportGarbled();
+      return waitReady(120000).then(function (ok) {
+        if (!ok) return null;
+        return attempt(opts, onSentence).then(function (r2) { if (r2 === GARBLED) { reportGarbled(); return null; } return r2; });
+      });
+    });
+  }
+  function attempt(opts, onSentence) {
     if (state !== 'ready') return Promise.resolve(null);
     var name = opts.name, task = opts.task || 'reply', full = opts.fullName || name;
     // the notes that relate to what was said first (a shorter prompt starts replying sooner)
@@ -130,30 +173,26 @@
     var history = (opts.history || []).slice(-14);
     var mine = history.filter(function (h) { return h.ai; }).map(function (h) { return h.text; });
     var now = new Date();
-    var sys = 'You are ' + full + (full !== name ? ' (people call you ' + name + ')' : '') + ', speaking out loud on a live video call, in the first person, as yourself.\n' +
-      'Personality and style: ' + (STYLES[opts.style] || STYLES.friendly) + '.' + (opts.instructions ? ' Your own instructions: ' + opts.instructions : '') + '\n' +
-      'How you talk: like a real person in a meeting. React to what was actually said, specifically. Usually one to three short sentences. ' +
-      'No filler or stock phrases ("Great question", "Got it", "Absolutely"), no repeating what you have already said, and vary your wording. ' +
-      'Remember the conversation and build on it. If something is unclear or you need more detail before you can answer well, ask one short question instead of answering. ' +
-      'Answer general questions, maths and small talk from your own knowledge.\n' +
+    var sys = 'You are ' + full + ', talking on a live video call. Speak in the first person, naturally, like a real person: ' +
+      'one to three short sentences that respond to what was just said. Style: ' + (STYLES[opts.style] || STYLES.friendly) + '.' +
+      (opts.instructions ? ' ' + opts.instructions : '') + '\n' +
+      'Do not repeat yourself and do not use filler. If something is unclear, ask a short question. ' +
       'It is ' + now.toLocaleString(undefined, { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '.\n' +
-      'Your notes (the only source for facts about your own work, projects, plans, schedule, numbers and decisions):\n' +
-      (notes.length ? notes.map(function (n) { return '- ' + n; }).join('\n') : '- (none)') + '\n' +
-      ((opts.shares || []).length ? 'Things you want to bring up in this meeting when it fits naturally:\n' + opts.shares.map(function (n) { return '- ' + n; }).join('\n') + '\n' : '') +
-      'If you are asked about your own work or plans and the notes do not cover it, start your reply with [ASK] and say you will check and get back to them. ' +
-      'Make no promises or commitments. If someone sincerely asks whether you are an AI, say honestly that you are ' + name + '\'s AI avatar.';
-    var convo = history.map(function (h) { return (h.ai ? 'You' : h.speaker) + ': ' + h.text; }).join('\n');
-    var said = mine.slice(-5);
-    var askLine = task === 'summon' ? opts.speaker + ' just said your name to get your attention and has not said anything else yet. Respond out loud with a very short acknowledgement that invites them to go on.'
-      : task === 'join' ? 'You have just joined the call. Greet everyone in one short, natural sentence.'
-      : task === 'relay' ? 'You just received this note from yourself to say now: "' + opts.text + '". Say it to the meeting in your own natural words, keeping every fact exactly as written.'
-      : opts.speaker + ' just said: "' + opts.text + '"' + (opts.oneOnOne ? ' (it is just the two of you on this call)' : '') + '\nReply to ' + opts.speaker + ' out loud.';
-    var user = (convo ? 'The conversation so far:\n' + convo + '\n\n' : '') + (said.length ? 'Lines you have already said (don\'t reuse their wording):\n' + said.map(function (x) { return '- ' + x; }).join('\n') + '\n\n' : '') + askLine;
+      (notes.length ? 'Your notes (the only source for facts about your own work and plans):\n' + notes.map(function (n) { return '- ' + n; }).join('\n') + '\n' : '') +
+      ((opts.shares || []).length ? 'Bring this up when it fits:\n' + opts.shares.map(function (n) { return '- ' + n; }).join('\n') + '\n' : '') +
+      'If asked about your own work or plans and your notes do not say, start with [ASK] and say you will check and get back to them. ' +
+      'Make no promises. If someone sincerely asks whether you are an AI, say you are ' + name + '\'s AI avatar.';
+    var convo = history.map(function (h) { return (h.ai ? full.split(' ')[0] + ' (you)' : h.speaker) + ': ' + h.text; }).join('\n');
+    var askLine = task === 'summon' ? opts.speaker + ' just said your name to get your attention. Reply with a very short acknowledgement so they go on.'
+      : task === 'join' ? 'You just joined the call. Say a short hello.'
+      : task === 'relay' ? 'Tell the meeting this in your own words, keeping every fact exactly: "' + opts.text + '"'
+      : opts.speaker + ' said: "' + opts.text + '"' + (opts.oneOnOne ? ' (just the two of you are on the call)' : '') + '\nReply to ' + opts.speaker + '.';
+    var user = (convo ? 'Conversation so far:\n' + convo + '\n\n' : '') + askLine;
     var known = ' ' + notes.concat(opts.shares || [], history.map(function (h) { return h.speaker + ' ' + h.text; }), [name, full, opts.speaker || '', opts.text || '']).join(' ').toLowerCase() + ' ';
     var maxSentences = task === 'reply' || task === 'relay' ? 3 : 1;
 
     return new Promise(function (resolve) {
-      var id = ++seq, buf = '', spoken = [], ask = false, finished = false, firstTimer, gotToken = false;
+      var id = ++seq, buf = '', spoken = [], ask = false, finished = false, firstTimer, gotToken = false, isGarbled = false;
       var finish = function (val) {
         if (finished) return;
         finished = true; clearTimeout(firstTimer); delete handlers[id];
@@ -161,7 +200,9 @@
       };
       var stop = function () { send({ id: id, kind: 'stop' }); };
       var take = function (sentence) {
-        var t = sentence.replace(/^\s*["“]|["”]\s*$/g, '').replace(/^(You|Me|[A-Z][a-z]+):\s*/, '').trim();
+        var t = sentence.replace(/^\s*["“]|["”]\s*$/g, '').replace(/^(You|Me|[A-Z][a-z]+( \(you\))?):\s*/, '').trim();
+        // broken output is never spoken
+        if (garbled(t) || garbled(spoken.concat([t]).join(' '))) { isGarbled = true; stop(); return false; }
         if (/\[ASK\]/i.test(t)) { ask = true; t = t.replace(/\[ASK\]\s*/ig, ''); }
         if (!t || !/[a-z]/i.test(t)) return true;
         if (!grounded(t, known)) { stop(); return false; } // drop an ungrounded claim and stop there
@@ -178,18 +219,20 @@
         if (m.kind === 'token') {
           if (!gotToken) { gotToken = true; clearTimeout(firstTimer); firstTimer = setTimeout(function () { if (!spoken.length && buf.trim()) { take(buf + '.'); buf = ''; } }, 12000); }
           buf += m.text;
+          // a long run without a sentence end: check it isn't word salad before waiting any longer
+          if (buf.length > 140 && garbled(buf)) { isGarbled = true; stop(); finish(GARBLED); return; }
           // speak a sentence the moment its closing punctuation arrives (don't wait for the next one);
           // a one-word sentence ("Sure.") is joined with the next
           var end;
           while ((end = sentenceEnd(buf)) >= 0) {
             var sent = buf.slice(0, end + 1);
             buf = buf.slice(end + 1);
-            if (!take(sent)) { finish({ said: spoken, ask: ask }); return; }
+            if (!take(sent)) { finish(isGarbled ? GARBLED : { said: spoken, ask: ask }); return; }
           }
         } else if (m.kind === 'done' || m.kind === 'error') {
           if (m.kind === 'error') { lastError = m.message; if (window.console) console.warn('[zoope AI]', m.message, m.stack || ''); }
           if (m.kind === 'done' && buf.trim()) take(buf);
-          finish(spoken.length || ask ? { said: spoken, ask: ask } : null);
+          finish(isGarbled ? GARBLED : spoken.length || ask ? { said: spoken, ask: ask } : null);
         }
       };
       // if the model produces nothing at all in time, zoope stays quiet rather than say something canned;

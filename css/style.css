@@ -1098,3 +1098,7 @@ html.phone body:not([data-route="home"]) .phone-gate {
 .style-panel { padding: 20px; display: grid; gap: 8px; }
 .style-panel .field-label { font-size: 13px; font-weight: 600; color: var(--gray-700); margin-top: 4px; }
 .style-panel textarea { min-height: 78px; padding: 10px 12px; resize: vertical; line-height: 1.5; }
+
+/* long or unbroken text wraps instead of pushing the transcript sideways */
+.transcript { overflow-x: hidden; }
+.transcript .line, .transcript .line-text { overflow-wrap: anywhere; word-break: break-word; min-width: 0; }

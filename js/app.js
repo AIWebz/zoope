@@ -1033,19 +1033,19 @@
     document.querySelector('.ext-steps').classList.add('hidden');
   });
   // which version of zoope this is, so an outdated copy of the site is easy to spot
-  var BUILD = '2026-10-03 · AI v9';
+  var BUILD = '2026-10-03 · AI v10';
   $('buildTag').textContent = BUILD;
   ZoopeBrain.onStatus(function (st) {
     // a banner in the meeting room whenever the AI isn't ready, so it's clear why replies are simple
     var ban = $('aiBanner');
     ban.classList.toggle('hidden', st.state === 'ready');
     ban.classList.toggle('err', st.state === 'error');
-    ban.textContent = st.state === 'loading' ? 'AI engine loading: ' + Math.round(st.progress * 100) + '%. zoope gives simple replies until it is ready (first time only; it is saved after).'
-      : st.state === 'error' ? 'AI engine not running: ' + (st.error || 'unknown error') + '. zoope gives simple replies. Retrying automatically.'
+    ban.textContent = st.state === 'loading' ? (st.error ? 'AI engine: ' + st.error + '…' : 'AI engine loading: ' + Math.round(st.progress * 100) + '%. zoope listens but stays quiet until it is ready (first time only; it is saved after).')
+      : st.state === 'error' ? 'AI engine not running: ' + (st.error || 'unknown error') + '. zoope listens but stays quiet.'
       : 'AI engine starting…';
     var text = st.state === 'ready' ? 'AI: ready' + (st.device === 'webgpu' ? ' (GPU)' : '')
       : st.state === 'loading' ? 'AI: loading ' + Math.round(st.progress * 100) + '%'
-      : st.state === 'error' ? 'AI: rules only (retrying)' : 'AI: starting';
+      : st.state === 'error' ? 'AI: not running' : 'AI: starting';
     ['brainState', 'brainStateNav'].forEach(function (id) {
       var el = $(id);
       el.textContent = text;

@@ -155,6 +155,11 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         chrome.runtime.sendMessage({ type: 'aiToEngine', msg: { id: tab + ':' + msg.id, kind: 'ask', messages: msg.messages, maxTokens: msg.maxTokens } }).catch(() => {});
         return { ok: true };
       }
+      case 'aiGarbled':
+        // a zoope tab saw broken output: the engine moves to its next mode
+        await setAiStatus({ state: 'loading', progress: 1, error: '' });
+        chrome.runtime.sendMessage({ type: 'aiToEngine', msg: { id: 0, kind: 'garbled' } }).catch(() => {});
+        return { ok: true };
       case 'aiStop':
         chrome.runtime.sendMessage({ type: 'aiToEngine', msg: { id: tab + ':' + msg.id, kind: 'stop' } }).catch(() => {});
         return { ok: true };

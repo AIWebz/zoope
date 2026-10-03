@@ -154,6 +154,7 @@
       connect: function () { return call({ type: 'aiConnect' }, 15000); },
       ask: function (id, messages, maxTokens) { return call({ type: 'aiAsk', id: id, messages: messages, maxTokens: maxTokens }, 15000); },
       stop: function (id) { return call({ type: 'aiStop', id: id }); },
+      garbled: function () { return call({ type: 'aiGarbled' }); },
       on: function (fn) { aiListeners.push(fn); }
     }
   };
