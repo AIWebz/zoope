@@ -64,7 +64,7 @@ Honesty rails: facts about your own work, plans, schedule and numbers may only c
 
 ### When zoope speaks (`js/engine.js`)
 
-- **Just your name** ("Alex?", "Hey Alex") gets "Yes?". If the same person keeps talking, their next line is treated as meant for you and answered.
+- **Just your name** ("Alex?", "Hey Alex"): zoope answers with a short, generated acknowledgement that invites them to go on. If the same person keeps talking, their next line is treated as meant for you and answered.
 - **One-on-one:** with only one other person in the meeting, zoope answers every finished line, not just questions.
 
 Every line said in a meeting gets a score. zoope speaks when the score reaches 0.5 or more.
