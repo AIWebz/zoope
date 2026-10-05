@@ -79,9 +79,10 @@ const smooth = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); ret
 /* Builds the deformable mesh for a portrait. Cached per photo. */
 const cache = new Map();
 async function build(P) {
-  const key = P.photo.length + ':' + P.photo.slice(-48);
+  const key = P.photo.length + ':' + P.photo.slice(-48) + (P.mouth ? ':m' + P.mouth.photo.length : '');
   if (cache.has(key)) return cache.get(key);
-  const [img, maskImg] = await Promise.all([loadImage(P.photo), P.mask ? loadImage(P.mask) : null]);
+  const [img, maskImg, mouthImg] = await Promise.all([loadImage(P.photo), P.mask ? loadImage(P.mask) : null,
+    P.mouth ? loadImage(P.mouth.photo).catch(() => null) : null]);
   const W = P.w, H = P.h, lm = P.pts, n = lm.length;
 
   // person mask sampler (1 = person), bilinear
@@ -190,6 +191,7 @@ async function build(P) {
 
   const out = {
     img, W, H, pts, tris, z, headW, jawW, bodyW, n, N, faceH, faceW, faceCx, chin, top: headTop, eyes,
+    mouthImg, mouthPts: mouthImg ? P.mouth : null,
     pivot: [faceCx, (lm[234][1] + lm[454][1]) / 2, hrz * 0.35],
     mouthOpenInPhoto: lm[14][1] - lm[13][1] > faceH * 0.02,
     cheeks: [lm[205], lm[425]],
@@ -542,7 +544,22 @@ function drawMouth(ctx, c, M, cur, restGap) {
   ctx.fillStyle = g;
   ctx.fillRect(x0, y0, w, h);
   const gap = C(14, 1) - C(13, 1), mw = C(308, 0) - C(78, 0);
-  if (restGap > M.faceH * 0.02) {
+  if (M.mouthImg) {
+    // your own open mouth (from the scan): the upper teeth stay with the upper lip, the lower teeth and
+    // tongue drop with the jaw, scaled to the mouth's width now; the gap between them is the dark cavity
+    const S = M.mouthPts, k = mw / Math.max(1, S.r[0] - S.l[0]), sx = (S.l[0] + S.r[0]) / 2;
+    const mid = (C(13, 1) + C(14, 1)) / 2, iw = M.mouthImg.width * k, ih = M.mouthImg.height * k;
+    ctx.save(); ctx.beginPath(); ctx.rect(x0, y0, w, mid - y0); ctx.clip();
+    ctx.drawImage(M.mouthImg, midX - sx * k, C(13, 1) - S.t[1] * k, iw, ih);
+    ctx.restore();
+    ctx.save(); ctx.beginPath(); ctx.rect(x0, mid, w, y0 + h - mid); ctx.clip();
+    ctx.drawImage(M.mouthImg, midX - sx * k, C(14, 1) - S.b[1] * k, iw, ih);
+    ctx.restore();
+    // a little shadow deep inside, so the halves meet softly
+    const dg = ctx.createLinearGradient(0, mid - gap * 0.3, 0, mid + gap * 0.3);
+    dg.addColorStop(0, 'rgba(26,7,8,0)'); dg.addColorStop(0.5, 'rgba(26,7,8,.35)'); dg.addColorStop(1, 'rgba(26,7,8,0)');
+    ctx.fillStyle = dg; ctx.fillRect(x0, mid - gap * 0.3, w, gap * 0.6);
+  } else if (restGap > M.faceH * 0.02) {
     // the photo had an open mouth: its upper half stays with the upper teeth, the lower half drops with the jaw
     const R = (i, k) => M.pts[i][k];
     const rmid = (R(13, 1) + R(14, 1)) / 2;

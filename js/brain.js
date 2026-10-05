@@ -258,6 +258,8 @@
     var convo = history.map(function (h) { return (h.ai ? full.split(' ')[0] + ' (you)' : h.speaker) + ': ' + h.text; }).join('\n');
     var askLine = task === 'summon' ? opts.speaker + ' just said your name to get your attention. Reply with a very short acknowledgement so they go on.'
       : task === 'join' ? 'You just joined the call. Say a short hello.'
+      : opts.batch && opts.batch.length > 1 ? 'While you were busy, this was said to you:\n' +
+        opts.batch.map(function (b) { return b.speaker + ': "' + b.text + '"'; }).join('\n') + '\nAnswer all of it together in one short turn, the way a person would.'
       : task === 'relay' ? 'You want to tell everyone on the call this: "' + opts.text + '". Say it to them now, in one or two natural sentences of your own, ' +
         'keeping every fact (names, days, times, numbers) exactly. Do not reply to it or acknowledge it; tell it to them.'
       : opts.speaker + ' said: "' + opts.text + '"' + (opts.oneOnOne ? ' (just the two of you are on the call)' : '') + '\nReply to ' + opts.speaker + '.';
@@ -265,7 +267,7 @@
       (notes.length ? 'Your notes (the only source for facts about your own work and plans):\n' + notes.map(function (n) { return '- ' + n; }).join('\n') + '\n' : 'You have no notes about your own work and plans.\n') +
       ((opts.shares || []).length ? 'Bring this up when it fits:\n' + opts.shares.map(function (n) { return '- ' + n; }).join('\n') + '\n' : '');
     var user = context + '\n' + (convo ? 'Conversation so far:\n' + convo + '\n\n' : '') + askLine;
-    var known = ' ' + notes.concat(opts.shares || [], history.map(function (h) { return h.speaker + ' ' + h.text; }), [name, full, opts.speaker || '', opts.text || '']).join(' ').toLowerCase() + ' ';
+    var known = ' ' + notes.concat(opts.shares || [], history.map(function (h) { return h.speaker + ' ' + h.text; }), [name, full, opts.speaker || '', opts.text || ''], (opts.batch || []).map(function (b) { return b.speaker + ' ' + b.text; })).join(' ').toLowerCase() + ' ';
     var maxSentences = task === 'reply' || task === 'relay' ? (cpu ? 2 : 3) : 1;
 
     var limit = function (ms) { return opts.deadline ? Math.max(300, Math.min(ms, opts.deadline - Date.now())) : ms; };

@@ -214,6 +214,7 @@
 
       <nav class="side-nav">
         <span class="side-label">Onboarding</span>
+        <a href="#/start" data-route="start" id="navStart"><svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg><span>Get started</span><i class="nav-count" id="navStartCount"></i></a>
         <a href="#/setup" data-route="setup"><svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg><span>Setup</span><i class="nav-state" data-state="setup"></i></a>
         <a href="#/clone" data-route="clone"><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg><span>Face &amp; voice</span><i class="nav-state" data-state="clone"></i></a>
         <span class="side-label">Your AI</span>
@@ -249,6 +250,94 @@
       </header>
 
       <main class="content">
+        <!-- ============================ Get started ============================ -->
+        <section class="page app-page" data-page="start">
+          <header class="page-header">
+            <div>
+              <h1>Get started</h1>
+              <p>Five steps before zoope can go to meetings for you. You can change any of them later.</p>
+            </div>
+            <span class="pill" id="onbCount">0 / 5 done</span>
+          </header>
+          <ol class="onb-steps" id="onbSteps">
+            <li data-n="1"><button type="button"><i>1</i><span>Names</span></button></li>
+            <li data-n="2"><button type="button"><i>2</i><span>Voice &amp; face</span></button></li>
+            <li data-n="3"><button type="button"><i>3</i><span>Meeting apps</span></button></li>
+            <li data-n="4"><button type="button"><i>4</i><span>Plan</span></button></li>
+            <li data-n="5"><button type="button"><i>5</i><span>Style</span></button></li>
+          </ol>
+
+          <section class="panel onb-panel" data-onb="1">
+            <h2>Your name and nicknames</h2>
+            <p class="hint-strong">zoope answers when people use any of these in a meeting, and introduces itself with the one you pick.</p>
+            <label class="field-label" for="onbFull">Full name</label>
+            <input id="onbFull" class="input" autocomplete="name" placeholder="Alex Rivera">
+            <label class="field-label" for="onbNicks">Nicknames and short names <span class="muted-2">(separated by commas, optional)</span></label>
+            <input id="onbNicks" class="input" autocomplete="off" placeholder="Al, AR">
+            <label class="field-label" for="onbPreferred">What should zoope call you?</label>
+            <input id="onbPreferred" class="input" autocomplete="off" placeholder="Alex">
+          </section>
+
+          <section class="panel onb-panel" data-onb="2">
+            <h2>Scan your voice and face</h2>
+            <p class="hint-strong">Your live avatar and voice are made on this computer from a short scan: your face, your face with the mouth open (so the avatar's mouth moves naturally, with your own teeth), and 15 seconds of your voice.</p>
+            <ul class="onb-checks" id="onbScanChecks"></ul>
+            <div class="btn-row"><a href="#/clone" class="btn btn-primary"><svg class="icon" aria-hidden="true"><use href="#i-scan"/></svg>Open the scanner</a></div>
+          </section>
+
+          <section class="panel onb-panel onb-flush" data-onb="3">
+            <div class="onb-pad">
+              <h2>Connect Zoom, Microsoft Teams and Google Meet</h2>
+              <p class="hint-strong">Link the accounts you use for meetings (at least one). You can change these any time in Setup.</p>
+            </div>
+            <div class="platform" data-platform="zoom">
+              <img src="assets/zoom.jpg" alt="">
+              <div class="platform-info"><b>Zoom</b><span class="platform-sub">Not linked</span></div>
+              <input type="email" class="input acct" placeholder="you@company.com" aria-label="Zoom account email">
+              <button type="button" class="btn btn-secondary connect-btn">Connect</button>
+            </div>
+            <div class="platform" data-platform="meet">
+              <img src="assets/meet.png" alt="">
+              <div class="platform-info"><b>Google Meet</b><span class="platform-sub">Not linked</span></div>
+              <input type="email" class="input acct" placeholder="you@gmail.com" aria-label="Google account email">
+              <button type="button" class="btn btn-secondary connect-btn">Connect</button>
+            </div>
+            <div class="platform" data-platform="teams">
+              <img src="assets/teams.webp" alt="">
+              <div class="platform-info"><b>Microsoft Teams</b><span class="platform-sub">Not linked</span></div>
+              <input type="email" class="input acct" placeholder="you@company.com" aria-label="Microsoft account email">
+              <button type="button" class="btn btn-secondary connect-btn">Connect</button>
+            </div>
+          </section>
+
+          <section class="panel onb-panel" data-onb="4">
+            <h2>Choose a plan</h2>
+            <p class="hint-strong">Demo: plans aren't billed yet, and no payment details are asked for. Pick one to continue; you can change it later in Setup.</p>
+            <div class="plans" data-plans></div>
+          </section>
+
+          <section class="panel onb-panel" data-onb="5">
+            <h2>Personality &amp; style</h2>
+            <p class="hint-strong">How zoope talks for you. Every reply is written in this style, following your instructions.</p>
+            <label class="field-label" for="onbStyle">Style</label>
+            <select id="onbStyle" class="select">
+              <option value="friendly">Friendly and warm</option>
+              <option value="professional">Professional and polished</option>
+              <option value="concise">Concise and direct</option>
+              <option value="casual">Casual and upbeat</option>
+              <option value="thoughtful">Thoughtful and measured</option>
+            </select>
+            <label class="field-label" for="onbInstr">Your instructions <span class="muted-2">(optional)</span></label>
+            <textarea id="onbInstr" class="textarea input" rows="3" placeholder="e.g. Keep answers short. Call people by their first name. Don't agree to new deadlines, say you'll check."></textarea>
+          </section>
+
+          <div class="onb-foot">
+            <button type="button" class="btn btn-ghost" id="onbBack">Back</button>
+            <span class="hint" id="onbHint" aria-live="polite"></span>
+            <button type="button" class="btn btn-primary" id="onbNext">Continue</button>
+          </div>
+        </section>
+
         <!-- ================================ Setup ================================ -->
         <section class="page app-page" data-page="setup">
           <header class="page-header">
@@ -314,6 +403,14 @@
 
           <section class="setting">
             <div class="setting-meta">
+              <h2>Plan</h2>
+              <p>Demo: plans aren't billed yet, and no payment details are asked for.</p>
+            </div>
+            <div class="panel onb-panel"><div class="plans" data-plans></div></div>
+          </section>
+
+          <section class="setting">
+            <div class="setting-meta">
               <h2>Personality &amp; style</h2>
               <p>How zoope talks for you. Its AI engine writes every reply in this style, following your instructions.</p>
             </div>
@@ -358,7 +455,10 @@
               <h1>Face &amp; voice</h1>
               <p>Scan your face to make your live avatar, then scan your voice and make a voice from it. Everything is processed on this device.</p>
             </div>
-            <button type="button" class="btn btn-primary" id="startCam"><svg class="icon" aria-hidden="true"><use href="#i-video"/></svg><span>Enable camera &amp; mic</span></button>
+            <div class="btn-row">
+              <a href="#/start" class="btn btn-secondary hidden" id="onbReturn">Back to Get started</a>
+              <button type="button" class="btn btn-primary" id="startCam"><svg class="icon" aria-hidden="true"><use href="#i-video"/></svg><span>Enable camera &amp; mic</span></button>
+            </div>
           </header>
 
           <section class="panel">
@@ -368,6 +468,7 @@
             </div>
             <ol class="scan-steps" id="scanSteps">
               <li data-step="0"><button type="button"><span class="ss-thumb"></span><span class="ss-text"><b>Face &amp; hair</b><em>Front</em></span></button></li>
+              <li data-step="1"><button type="button"><span class="ss-thumb"></span><span class="ss-text"><b>Mouth open</b><em>Say “ah”</em></span></button></li>
             </ol>
             <div class="face-grid">
               <div class="viewport">

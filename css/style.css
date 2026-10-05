@@ -1102,3 +1102,57 @@ html.phone body:not([data-route="home"]) .phone-gate {
 /* long or unbroken text wraps instead of pushing the transcript sideways */
 .transcript { overflow-x: hidden; }
 .transcript .line, .transcript .line-text { overflow-wrap: anywhere; word-break: break-word; min-width: 0; }
+
+/* ---------------------------------------------------------------- get started */
+.onb-steps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 20px; }
+.onb-steps button {
+  width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  border: 1px solid var(--gray-200); border-radius: var(--r-md); background: var(--gray-0);
+  font: inherit; font-size: 13px; font-weight: 500; color: var(--gray-600); cursor: pointer; text-align: left;
+}
+.onb-steps button:hover { background: var(--gray-50); }
+.onb-steps i {
+  flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  font-style: normal; font-size: 12px; font-weight: 600; background: var(--gray-100); color: var(--gray-600);
+}
+.onb-steps li.current button { border-color: var(--accent); color: var(--gray-950); box-shadow: var(--ring); }
+.onb-steps li.current i { background: var(--accent); color: #fff; }
+.onb-steps li.done i { background: var(--green); color: #fff; }
+.onb-steps li.done i { font-size: 0; }
+.onb-steps li.done i::before { content: "✓"; font-size: 12px; }
+.onb-panel { padding: 24px; display: grid; gap: 8px; }
+.onb-panel.onb-flush { padding: 0; gap: 0; }
+.onb-pad { padding: 24px 24px 12px; display: grid; gap: 8px; }
+.onb-panel h2 { font-size: 18px; font-weight: 600; letter-spacing: -.015em; color: var(--gray-950); }
+.onb-panel .field-label { font-size: 13px; font-weight: 600; color: var(--gray-700); margin-top: 8px; }
+.onb-panel .btn-row { margin-top: 8px; }
+.onb-checks { display: grid; gap: 6px; margin-top: 6px; }
+.onb-checks li {
+  display: flex; justify-content: space-between; align-items: center; padding: 10px 14px;
+  border: 1px solid var(--gray-200); border-radius: var(--r-md); font-size: 14px; color: var(--gray-700);
+}
+.onb-checks em { font-style: normal; font-size: 12px; font-weight: 600; color: var(--amber); }
+.onb-checks li.ok em { color: var(--green); }
+.onb-foot { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
+.onb-foot .hint { flex: 1; color: var(--amber); }
+.plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 8px; }
+.plan {
+  position: relative; display: flex; flex-direction: column; gap: 10px; padding: 20px;
+  border: 1px solid var(--gray-200); border-radius: var(--r-lg); background: var(--gray-0);
+}
+.plan.best { border-color: var(--accent-200); }
+.plan.selected { border-color: var(--accent); box-shadow: var(--ring); }
+.plan-tag {
+  position: absolute; top: -10px; left: 16px; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; background: var(--accent); color: #fff;
+}
+.plan-name { font-size: 15px; font-weight: 600; color: var(--gray-950); }
+.plan-price { font-size: 26px; font-weight: 600; letter-spacing: -.02em; color: var(--gray-950); }
+.plan-price span { font-size: 13px; font-weight: 400; letter-spacing: 0; color: var(--gray-500); }
+.plan ul { display: grid; gap: 6px; flex: 1; font-size: 13px; color: var(--gray-600); }
+.plan li::before { content: "✓"; color: var(--green); margin-right: 8px; }
+.plan .btn { width: 100%; justify-content: center; }
+@media (max-width: 900px) {
+  .onb-steps { grid-template-columns: 1fr; }
+  .plans { grid-template-columns: 1fr; }
+}

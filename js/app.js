@@ -304,14 +304,17 @@
 
   /* ------------------------------ head scan steps ------------------------------ */
   var SCAN_STEPS = [
-    { key: 'front', title: 'Face & hair', button: 'Capture', countdown: 3,
-      text: 'Face the camera with your head, hair and shoulders in view, in good light. Keep a neutral expression with your mouth closed.' }
+    { key: 'front', title: 'Face & hair', button: 'Capture', countdown: 3, label: 'Front',
+      text: 'Face the camera with your head, hair and shoulders in view, in good light. Keep a neutral expression with your mouth closed.' },
+    // your real teeth and tongue, so the avatar's mouth opens naturally when it talks
+    { key: 'mouth', title: 'Mouth open', button: 'Capture mouth open', countdown: 3, label: 'Say “ah”',
+      text: 'Stay facing the camera in the same light, and open your mouth wide as if saying “ah” at the doctor\'s, so your teeth show. Hold it until the beep.' }
   ];
   var scanStep = 0, scanning = false;
 
   function stepDone(i) {
     var f = state.face;
-    return !!(f && f.portrait && i === 0);
+    return !!(f && f.portrait && (i === 0 || (i === 1 && f.portrait.mouth)));
   }
   function scanCount() { var n = 0; for (var i = 0; i < SCAN_STEPS.length; i++) if (stepDone(i)) n++; return n; }
   function firstMissing() { for (var i = 0; i < SCAN_STEPS.length; i++) if (!stepDone(i)) return i; return -1; }
@@ -321,9 +324,9 @@
     document.querySelectorAll('#scanSteps li').forEach(function (li, i) {
       li.classList.toggle('done', stepDone(i));
       li.classList.toggle('current', i === scanStep);
-      var photo = f && f.portrait && f.photo;
+      var photo = f && f.portrait && (i === 0 ? f.photo : f.portrait.mouth && f.portrait.mouth.photo);
       li.querySelector('.ss-thumb').style.backgroundImage = photo ? 'url(' + photo + ')' : '';
-      li.querySelector('em').textContent = stepDone(i) ? 'Captured' : 'Front';
+      li.querySelector('em').textContent = stepDone(i) ? 'Captured' : SCAN_STEPS[i].label;
     });
     var st = SCAN_STEPS[scanStep];
     $('scanTitle').textContent = st.title;
@@ -331,14 +334,15 @@
     $('scanFace').querySelector('span').textContent = stepDone(scanStep) ? 'Rescan' : st.button;
     $('scanGuide').dataset.step = scanStep;
     var n = scanCount();
-    $('faceBadge').textContent = n ? 'Captured' : 'Not scanned';
-    $('faceBadge').className = 'pill ' + (n ? 'pill-green pill-dot' : '');
+    $('faceBadge').textContent = n === SCAN_STEPS.length ? 'Captured' : n + ' / ' + SCAN_STEPS.length + ' captured';
+    $('faceBadge').className = 'pill ' + (n === SCAN_STEPS.length ? 'pill-green pill-dot' : '');
   }
 
   document.querySelectorAll('#scanSteps li').forEach(function (li, i) {
     li.querySelector('button').addEventListener('click', function () {
       if (scanning) return;
       if (i > 0 && !stepDone(0)) { toast('Start with step 1, the front of your face.', 'error'); return; }
+      if (i === 1 && state.face && state.face.kind !== 'mesh') { toast('Rescan step 1 first: the live avatar is needed for the mouth.', 'error'); return; }
       scanStep = i;
       renderScanSteps();
       $('scanStatus').textContent = stream ? 'Press the button when you\'re in position.' : 'Enable the camera to start the scan.';
@@ -411,15 +415,27 @@
     }).then(function () {
       line.classList.add('on');
       $('scanStatus').textContent = 'Scanning…';
-      return ZoopeHeadScan.captureFront(cam);
+      return st.key === 'mouth' ? ZoopeHeadScan.captureMouth(cam) : ZoopeHeadScan.captureFront(cam);
     }).then(function (res) {
       if (!res.ok) { beep(220, 300); $('scanStatus').textContent = res.reason; return; }
+      if (st.key === 'mouth') {
+        state.face.portrait.mouth = res.mouth;
+        save();
+        refreshAvatarBox();
+        $('scanStatus').textContent = 'Captured. Your avatar now opens its mouth with your own teeth and tongue when it talks.';
+        toast('Mouth captured');
+        return;
+      }
+      // a new front scan needs a new open-mouth photo in the same light (step 2)
       state.face = res.face;
       save();
+      scanStep = stepDone(1) ? 0 : 1;
       refreshAvatarBox();
-      $('scanStatus').textContent = 'Captured. Your live avatar is ready. It moves, blinks and speaks with your face.';
+      $('scanStatus').textContent = stepDone(1) ? 'Captured. Your live avatar is ready. It moves, blinks and speaks with your face.'
+        : 'Front captured. Now step 2: open your mouth wide (“ah”) and press Capture mouth open.';
       toast('Face captured');
     }).catch(function () {
+      if (st.key === 'mouth') { $('scanStatus').textContent = 'The scanning models couldn\'t load. Check your connection and try again.'; return; }
       // the scanning models couldn't load: fall back to an illustrated avatar, and say so
       state.face = ZoopeAvatar.scanFace(cam);
       save();
@@ -722,7 +738,8 @@
     $('checklistItems').innerHTML = items.map(function (i) {
       return '<li class="' + (i.done ? 'done' : '') + '"><a href="#/' + i.route + '">' + esc(i.label) + '</a></li>';
     }).join('');
-    $('checklist').classList.toggle('hidden', done === items.length);
+    $('checklist').classList.toggle('hidden', done === items.length || !state.onboarded); // Get started guides until then
+    if (PLANS) renderOnboarding();
     document.querySelector('[data-state="setup"]').classList.toggle('done', items[0].done && items[1].done && items[2].done);
     document.querySelector('[data-state="clone"]').classList.toggle('done', items[3].done && items[4].done);
     var upcoming = state.meetings.filter(function (m) { return new Date(m.time).getTime() > Date.now() - 15 * 60 * 1000; }).length;
@@ -1005,6 +1022,7 @@
         });
         sess.on('caption', function (ev) {
           if (room !== r || ev.self) return; // our own words, captioned back
+          if (!ev.chat) r.othersAt = Date.now();
           if (!ev.chat && wordCount(ev.text) >= 5) yieldTurn(r, ev.speaker);
           addTile(r, ev.speaker);
           hear(ev.speaker, ev.text, ev.chat);
@@ -1012,6 +1030,7 @@
         // someone is still talking: zoope's AI starts on what they've said so far
         sess.on('partial', function (ev) {
           if (room !== r) return;
+          r.othersAt = Date.now();
           if (wordCount(ev.text) >= 5) yieldTurn(r, ev.speaker);
           preview(r, ev.speaker, ev.text);
         });
@@ -1042,7 +1061,7 @@
     document.querySelector('.ext-steps').classList.add('hidden');
   });
   // which version of zoope this is, so an outdated copy of the site is easy to spot
-  var BUILD = '2026-10-03 · AI v14';
+  var BUILD = '2026-10-05 · AI v15';
   $('buildTag').textContent = BUILD;
   ZoopeBrain.onStatus(function (st) {
     if (st.state === 'ready' && room) ZoopeBrain.warm(aiPersona(room));
@@ -1114,6 +1133,7 @@
     d.innerHTML = who ? '<span class="line-who">' + esc(who) + '</span><span class="line-text">' + esc(text) + '</span>' : esc(text);
     $('transcript').appendChild(d);
     $('transcript').scrollTop = $('transcript').scrollHeight;
+    return d;
   }
 
   function highlight(name, on) {
@@ -1161,43 +1181,69 @@
     return Math.max(0, Math.min(0.7, 0.12 + up));
   }
 
+  /*
+   * Says one piece of a reply. opts: { noPause: true } for the next piece of the same reply (said straight
+   * on), { reply: {} } to show all the pieces of one reply as one line in the transcript.
+   * Turn-taking, as people do it: a new reply waits (briefly) for whoever is talking to pause, and leaves a
+   * short gap after zoope's previous reply, so separate replies never run together.
+   */
   function aiSay(text, opts) {
-    var r = room, noPause = opts && opts.noPause, tText = Date.now(), ep = r.epoch || 0;
+    var r = room, noPause = opts && opts.noPause, reply = opts && opts.reply, tText = Date.now(), ep = r.epoch || 0;
+    var show = function (suffix) {
+      if (reply && reply.el) {
+        var t = reply.el.querySelector('.line-text');
+        t.textContent += ' ' + text;
+        $('transcript').scrollTop = $('transcript').scrollHeight;
+      } else {
+        var el = line('ai', r.engine.preferred + ' · zoope' + (suffix || ''), text);
+        if (reply) reply.el = el;
+      }
+    };
     r.queue = r.queue.then(function () {
       if (room !== r || ep !== (r.epoch || 0)) return; // someone talked over zoope: this part isn't said
       if (Date.now() - tText > 20000) return; // stuck behind a slow voice for too long: it would come out of nowhere
-      // a short natural pause before speaking; in real calls keep it tight so replies don't lag
-      // in a real call the zoope tab is in the background, where Chrome delays timers by up to a second,
-      // so the live path uses no timers at all
-      return (r.live || noPause ? Promise.resolve() : new Promise(function (res) { setTimeout(res, 300); })).then(function () {
+      return (noPause ? Promise.resolve() : turnGap(r)).then(function () {
         if (room !== r || ep !== (r.epoch || 0)) return;
         r.speaking = true; r.speakStart = Date.now(); r.expr = exprFor(text);
         if (r.live) {
           if (!r.session) return;
           var neuralOk = state.neuralReady && (state.voiceMode || 'neural') === 'neural' && neuralState === 'ready';
           if (!neuralOk && liteReady() && (state.voiceMode || 'neural') === 'neural') {
-            line('ai', r.engine.preferred + ' · zoope', text);
+            show();
             highlight(null, true);
             return lite().then(function (m) { return m.speak(text, state.liteVoice, function (l) { r.level = l; }, timedOut(r, r.session.voiceOut(), tText, 'light voice')); })
               .catch(function () { line('sys', null, 'The voice failed, so this went to the chat.'); return r.session.chat(text); });
           }
           if (!neuralOk) {
-            line('ai', r.engine.preferred + ' · zoope (chat)', text);
+            show(' (chat)');
             timing(r, tText, null, 'chat (no voice made)');
             return r.session.chat(text);
           }
-          line('ai', r.engine.preferred + ' · zoope', text);
+          show();
           highlight(null, true);
           return neural().then(function (m) { return m.speak(text, function (l) { r.level = l; }, timedOut(r, r.session.voiceOut(), tText, 'cloned voice')); })
             .catch(function () { line('sys', null, 'The voice failed, so this went to the chat.'); return r.session.chat(text); });
         }
-        line('ai', r.engine.preferred + ' · zoope', text);
+        show();
         highlight(null, true);
         var how = neuralState === 'ready' ? 'cloned voice' : liteReady() ? 'light voice' : 'browser voice';
         return speakAs(text, function (l) { r.level = l; if (l && (l.open || l) > 0.04) timing(r, tText, Date.now(), how); });
-      }).then(function () { highlight(null, false); r.level = 0; r.speaking = false; });
+      }).then(function () { highlight(null, false); r.level = 0; r.speaking = false; r.spokeAt = Date.now(); });
     });
     return r.queue;
+  }
+  // Before a new reply: let whoever is talking finish (up to 2.5 s), and leave a breath (0.5 s) after
+  // zoope's own last reply. Not used inside a reply. (Waits are short checks, so a background tab's
+  // slower timers only make them a little longer.)
+  function turnGap(r) {
+    var until = Date.now() + 2500;
+    return new Promise(function (resolve) {
+      (function check() {
+        var now = Date.now(), othersTalking = now - (r.othersAt || 0) < 500, tooSoon = now - (r.spokeAt || 0) < 500;
+        if (room !== r || now >= until || (!othersTalking && !tooSoon)) return resolve();
+        setTimeout(check, 120);
+      })();
+    });
   }
 
   function hear(speaker, text, viaChat) {
@@ -1218,7 +1264,7 @@
     if (!d.speak) return;
     var directedQ = r.engine.isQuestion(text) && (d.addressed || d.oneOnOne);
     var gopts = { task: task, speaker: speaker, text: text, oneOnOne: d.oneOnOne, aiCheck: d.intent === 'aicheck' };
-    if (useSpec) r.replySeq = (r.replySeq || 0) + 1; // older replies still waiting are superseded
+    if (useSpec) { r.replySeq = (r.replySeq || 0) + 1; r.waiting = []; } // older replies still waiting are superseded
     (useSpec ? inTurn(r, function () { return spec.commit(d); }) : respondWithAI(r, gopts, d)).then(function (res) {
       if (room !== r) return;
       // the notes didn't cover it (or no reply could be made): it waits on the user
@@ -1259,11 +1305,15 @@
   function respondWithAI(r, gopts, decision) {
     gopts.deadline = gopts.deadline || replyDeadline(gopts.task, Date.now());
     var seq = gopts.task === 'reply' || gopts.task === 'summon' ? (r.replySeq = (r.replySeq || 0) + 1) : 0;
+    if (seq) (r.waiting = r.waiting || []).push({ speaker: gopts.speaker, text: gopts.text });
     return inTurn(r, function () {
-      // a newer line for zoope came in while this one waited its turn: that one is answered instead
+      // a newer line for zoope came in while this one waited its turn: it is answered with that one
       if (seq && seq !== r.replySeq) return { said: [], ask: false, skipped: true };
       // waited too long already: an answer now would come out of nowhere
-      if (Date.now() > gopts.deadline) { lateNotice(r, gopts.task); return null; }
+      if (Date.now() > gopts.deadline) { r.waiting = []; lateNotice(r, gopts.task); return null; }
+      // lines for zoope that came in while it was busy are answered together, in one turn, as people do,
+      // instead of one reply after another
+      if (seq) { var lines = r.waiting || []; r.waiting = []; if (lines.length > 1) gopts.batch = lines.slice(-4); }
       return generateReply(r, gopts, decision);
     });
   }
@@ -1293,7 +1343,7 @@
     var p = state.profile;
     var notes = (p.notes || []).map(function (n) { return n.text; }).concat(r.meeting.demo && !(p.notes || []).length ? [SAMPLE_KNOWLEDGE] : []);
     var hist = r.engine.history;
-    var held = !!spec, early = [], pending = [], talking = false, firstSaid = false, ep0 = r.epoch || 0, delivered = [];
+    var held = !!spec, early = [], pending = [], talking = false, firstSaid = false, ep0 = r.epoch || 0, delivered = [], replyLine = {};
     var control = spec ? spec.control : {};
     if (!spec) { setThinking(r, true); r.genControl = control; }
     var cut = function () { return (r.epoch || 0) !== ep0; };
@@ -1304,7 +1354,7 @@
       if (talking || !pending.length || room !== r) return;
       talking = true;
       var text = pending.splice(0).join(' ');
-      aiSay(text, firstSaid ? { noPause: true } : null).then(function () { talking = false; pump(); });
+      aiSay(text, { noPause: firstSaid, reply: replyLine }).then(function () { talking = false; pump(); });
       firstSaid = true;
     };
     var deliver = function (sentence) {
@@ -1597,9 +1647,120 @@
     toast('“' + n + '” added to your names');
   });
 
+  /* ------------------------------ get started ------------------------------ */
+  // Five steps every user completes before using zoope: names, voice & face, meeting apps, a plan (demo)
+  // and style. Until then the app opens on this page (the face & voice scanner stays reachable).
+  var PLANS = [
+    { id: 'free', name: 'Free', price: '$0', per: 'forever', items: ['Demo meetings', '3 real meetings a month', 'Light voice tuned to you'] },
+    { id: 'pro', name: 'Pro', price: '$15', per: 'per month', best: true, items: ['Unlimited meetings', 'Your cloned voice', 'Summaries, notes and pings'] },
+    { id: 'team', name: 'Team', price: '$29', per: 'per person / month', items: ['Everything in Pro', 'Shared notes for your team', 'Admin controls'] }
+  ];
+  var onbStep = 1;
+  function onboardingActive() { return !state.onboarded; }
+  function onbDone(n) {
+    var p = state.profile;
+    if (n === 1) return !!(p.fullName && p.preferred && p.names && p.names.length);
+    if (n === 2) return scanCount() === SCAN_STEPS.length && !!voiceSample && (!!state.neuralReady || liteReady());
+    if (n === 3) return Object.keys(state.platforms).length > 0;
+    if (n === 4) return !!state.plan;
+    return !!p.styleSet;
+  }
+  function onbFirstMissing() { for (var n = 1; n <= 5; n++) if (!onbDone(n)) return n; return 0; }
+  function renderOnboarding() {
+    var done = 0;
+    for (var n = 1; n <= 5; n++) if (onbDone(n)) done++;
+    $('onbCount').textContent = done + ' / 5 done';
+    $('onbCount').className = 'pill ' + (done === 5 ? 'pill-green pill-dot' : '');
+    $('navStart').classList.toggle('hidden', !!state.onboarded);
+    $('navStartCount').textContent = state.onboarded ? '' : String(5 - done || '');
+    document.querySelectorAll('#onbSteps li').forEach(function (li) {
+      var k = +li.dataset.n;
+      li.classList.toggle('done', onbDone(k));
+      li.classList.toggle('current', k === onbStep);
+    });
+    document.querySelectorAll('.onb-panel[data-onb]').forEach(function (el) { el.classList.toggle('hidden', +el.dataset.onb !== onbStep); });
+    $('onbBack').disabled = onbStep === 1;
+    $('onbNext').textContent = onbStep === 5 ? 'Finish' : 'Continue';
+    var checks = [['Face scanned', stepDone(0)], ['Mouth-open photo', stepDone(1)], ['Voice scanned', !!voiceSample], ['Voice made', !!state.neuralReady || liteReady()]];
+    $('onbScanChecks').innerHTML = checks.map(function (c) {
+      return '<li class="' + (c[1] ? 'ok' : '') + '"><span>' + esc(c[0]) + '</span><em>' + (c[1] ? 'Done' : 'To do') + '</em></li>';
+    }).join('');
+    if (onbStep === 1) {
+      var p = state.profile, first = (p.fullName || '').split(/\s+/)[0];
+      if (!$('onbFull').value) $('onbFull').value = p.fullName || '';
+      if (!$('onbPreferred').value) $('onbPreferred').value = p.preferred || '';
+      if (!$('onbNicks').value) $('onbNicks').value = (p.names || []).filter(function (x) { return x !== p.preferred && x !== first; }).join(', ');
+    }
+    if (onbStep === 5) { $('onbStyle').value = state.profile.style || 'friendly'; $('onbInstr').value = state.profile.instructions || ''; }
+    renderPlans();
+  }
+  function saveNames() {
+    var full = $('onbFull').value.trim().replace(/\s+/g, ' ');
+    if (!full) { $('onbFull').classList.add('invalid'); $('onbFull').focus(); return false; }
+    var p = state.profile, pref = $('onbPreferred').value.trim() || full.split(' ')[0];
+    p.fullName = full; p.preferred = pref; p.names = [];
+    addNames([pref, full.split(' ')[0]].concat(splitNames($('onbNicks').value)));
+    state.chatStep = 'done';
+    save(); renderChips(); renderChecklist();
+    return true;
+  }
+  $('onbFull').addEventListener('input', function () { $('onbFull').classList.remove('invalid'); });
+  function saveStyle(mark) {
+    state.profile.style = $('onbStyle').value;
+    state.profile.instructions = $('onbInstr').value.trim().slice(0, 600);
+    if (mark) state.profile.styleSet = true;
+    save();
+    $('styleSelect').value = state.profile.style; $('styleInstructions').value = state.profile.instructions;
+  }
+  $('onbStyle').addEventListener('change', function () { saveStyle(false); });
+  $('onbInstr').addEventListener('input', function () { saveStyle(false); });
+  var ONB_HINT = { 2: 'Finish the scan first: your face, your mouth open, and your voice.', 3: 'Link at least one meeting app.', 4: 'Pick a plan to continue.' };
+  $('onbNext').addEventListener('click', function () {
+    $('onbHint').textContent = '';
+    if (onbStep === 1 && !saveNames()) return;
+    if (onbStep === 5) saveStyle(true);
+    if (!onbDone(onbStep)) { $('onbHint').textContent = ONB_HINT[onbStep] || ''; return; }
+    if (onbStep < 5) { onbStep++; renderOnboarding(); window.scrollTo(0, 0); return; }
+    var missing = onbFirstMissing();
+    if (missing) { onbStep = missing; renderOnboarding(); $('onbHint').textContent = 'Step ' + missing + ' isn\'t finished yet. ' + (ONB_HINT[missing] || ''); return; }
+    state.onboarded = true;
+    save(); renderOnboarding(); renderChecklist();
+    toast('You\'re all set. zoope is ready for your meetings.');
+    navigate('meetings');
+  });
+  $('onbBack').addEventListener('click', function () { if (onbStep > 1) { onbStep--; $('onbHint').textContent = ''; renderOnboarding(); } });
+  document.querySelectorAll('#onbSteps li').forEach(function (li) {
+    li.querySelector('button').addEventListener('click', function () {
+      if (onbStep === 1 && +li.dataset.n !== 1 && $('onbFull').value.trim()) saveNames();
+      onbStep = +li.dataset.n; $('onbHint').textContent = ''; renderOnboarding();
+    });
+  });
+  // plans (a demo: nothing is charged and no payment details are asked for)
+  function renderPlans() {
+    document.querySelectorAll('[data-plans]').forEach(function (box) {
+      box.innerHTML = PLANS.map(function (pl) {
+        var on = !!(state.plan && state.plan.id === pl.id);
+        return '<div class="plan' + (on ? ' selected' : '') + (pl.best ? ' best' : '') + '">' +
+          (pl.best ? '<span class="plan-tag">Most popular</span>' : '') +
+          '<b class="plan-name">' + esc(pl.name) + '</b><div class="plan-price">' + esc(pl.price) + ' <span>' + esc(pl.per) + '</span></div>' +
+          '<ul>' + pl.items.map(function (i) { return '<li>' + esc(i) + '</li>'; }).join('') + '</ul>' +
+          '<button type="button" class="btn ' + (on ? 'btn-secondary' : 'btn-primary') + '" data-plan="' + pl.id + '"' + (on ? ' disabled' : '') + '>' + (on ? 'Selected' : 'Choose ' + esc(pl.name)) + '</button></div>';
+      }).join('');
+    });
+  }
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('[data-plan]');
+    if (!b) return;
+    var pl = PLANS.filter(function (x) { return x.id === b.dataset.plan; })[0];
+    state.plan = { id: pl.id, name: pl.name, price: pl.price, chosenAt: Date.now(), demo: true };
+    save(); renderOnboarding();
+    $('onbHint').textContent = '';
+    toast(pl.name + ' plan selected (demo: no charge)');
+  });
+
   /* ------------------------------- routing ------------------------------- */
-  var ROUTES = ['home', 'setup', 'clone', 'notes', 'demo', 'meetings', 'summaries'];
-  var TITLES = { home: 'zoope', setup: 'Setup', clone: 'Face & voice', notes: 'Notes', demo: 'Demo meeting', meetings: 'Meetings', summaries: 'Summaries' };
+  var ROUTES = ['home', 'start', 'setup', 'clone', 'notes', 'demo', 'meetings', 'summaries'];
+  var TITLES = { home: 'zoope', start: 'Get started', setup: 'Setup', clone: 'Face & voice', notes: 'Notes', demo: 'Demo meeting', meetings: 'Meetings', summaries: 'Summaries' };
   var currentRoute = null, navToken = 0;
   var reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -1623,6 +1784,8 @@
     });
     document.body.dataset.route = route;
     $('crumbCurrent').textContent = TITLES[route];
+    $('onbReturn').classList.toggle('hidden', !!state.onboarded);
+    if (route === 'start') { if (!state.onboarded && onbDone(onbStep)) onbStep = onbFirstMissing() || 5; renderOnboarding(); }
     document.title = route === 'home' ? 'zoope · Your AI meeting stand-in' : TITLES[route] + ' · zoope';
     if (route === 'demo') {
       var live = !!(room && room.page === 'demo');
@@ -1633,6 +1796,8 @@
   }
 
   function go(route, instant) {
+    // until the five Get started steps are done, the app opens there (the scanner is part of step 2)
+    if (!state.onboarded && route !== 'home' && route !== 'start' && route !== 'clone') { navigate('start'); return; }
     if (route === currentRoute) return;
     var prev = currentRoute;
     currentRoute = route;
@@ -1697,5 +1862,6 @@
     neuralState = 'error';
     renderVoice('Making your voice closed this tab last time (the computer ran out of memory). Close other tabs and press Make my voice to try again.');
   } else if (voiceSample && state.neuralReady && !IS_PHONE) buildNeural(true);
+  renderOnboarding();
   go(routeFromHash(), true);
 })();

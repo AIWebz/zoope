@@ -198,5 +198,37 @@
     });
   }
 
-  global.ZoopeHeadScan = { captureFront: captureFront, captureView: captureView, SIZE: SIZE };
+  /*
+   * The mouth open ("ah"), so the avatar shows your real teeth and tongue when it talks instead of a
+   * drawn mouth. Keeps a small crop around the mouth and where the lip corners and the middle of the
+   * upper and lower lip are in it.
+   */
+  var INNER_LIP = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95];
+  function captureMouth(video) {
+    return FM().scan(video).then(function (face) {
+      if (!face) return { ok: false, reason: 'No face found. Look straight at the camera with your face in view, in good light.' };
+      var p = face.points, frame = face._frame, crop = face._crop;
+      delete face._frame; delete face._crop;
+      var faceH = Math.abs(p[152][1] - p[10][1]), gap = p[14][1] - p[13][1];
+      var mid = (p[234][0] + p[454][0]) / 2, half = (p[454][0] - p[234][0]) / 2;
+      if (Math.abs((p[1][0] - mid) / half) > 0.25) return { ok: false, reason: 'Look straight at the camera.' };
+      if (gap < faceH * 0.11) return { ok: false, reason: 'Open your mouth wider, as if saying "ah" at the doctor\'s, so your teeth show. Hold it until the beep.' };
+      var F = function (i) { return [p[i][0] / crop.k + crop.sx, p[i][1] / crop.k + crop.sy]; };
+      var x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      INNER_LIP.forEach(function (i) { var q = F(i); x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]); });
+      var mw = x1 - x0, mh = y1 - y0;
+      x0 = Math.max(0, x0 - mw * 0.25); x1 = Math.min(frame.width, x1 + mw * 0.25);
+      y0 = Math.max(0, y0 - mh * 0.3); y1 = Math.min(frame.height, y1 + mh * 0.3);
+      var s = Math.min(3, 240 / (x1 - x0)), W = Math.round((x1 - x0) * s), H = Math.round((y1 - y0) * s);
+      var c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      var ctx = c.getContext('2d');
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(frame, x0, y0, x1 - x0, y1 - y0, 0, 0, W, H);
+      var at = function (i) { var q = F(i); return [Math.round((q[0] - x0) * s * 10) / 10, Math.round((q[1] - y0) * s * 10) / 10]; };
+      return { ok: true, mouth: { photo: c.toDataURL('image/jpeg', 0.9), w: W, h: H, l: at(78), r: at(308), t: at(13), b: at(14), open: Math.round(gap / faceH * 1000) / 1000 } };
+    });
+  }
+
+  global.ZoopeHeadScan = { captureFront: captureFront, captureView: captureView, captureMouth: captureMouth, SIZE: SIZE };
 })(window);
