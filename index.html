@@ -312,7 +312,7 @@
 
           <section class="panel onb-panel" data-onb="4">
             <h2>Choose a plan</h2>
-            <p class="hint-strong">Demo: plans aren't billed yet, and no payment details are asked for. Pick one to continue; you can change it later in Setup.</p>
+            <p class="hint-strong plan-note">Demo: plans aren't billed yet, and no payment details are asked for. Pick one to continue; you can change it later in Setup.</p>
             <div class="plans" data-plans></div>
           </section>
 
@@ -404,7 +404,7 @@
           <section class="setting">
             <div class="setting-meta">
               <h2>Plan</h2>
-              <p>Demo: plans aren't billed yet, and no payment details are asked for.</p>
+              <p class="plan-note">Demo: plans aren't billed yet, and no payment details are asked for.</p>
             </div>
             <div class="panel onb-panel"><div class="plans" data-plans></div></div>
           </section>
@@ -425,6 +425,7 @@
               </select>
               <label class="field-label" for="styleInstructions">Your instructions <span class="muted-2">(optional)</span></label>
               <textarea id="styleInstructions" class="textarea input" rows="3" placeholder="e.g. Keep answers short. Call people by their first name. Don't agree to new deadlines, say you'll check."></textarea>
+              <label class="check-row"><input type="checkbox" id="announceAi" checked> <span>When zoope joins a call, post in the meeting chat that your AI assistant is attending for you. Recommended: recording and AI-disclosure rules in some places and workplaces require telling people.</span></label>
               <p class="hint" id="styleSaved">Saved automatically.</p>
             </div>
           </section>
@@ -753,6 +754,8 @@
   <script src="js/headscan.js"></script>
   <script src="js/avatar.js"></script>
   <script src="js/voice.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/liveness.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

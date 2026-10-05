@@ -1156,3 +1156,6 @@ html.phone body:not([data-route="home"]) .phone-gate {
   .onb-steps { grid-template-columns: 1fr; }
   .plans { grid-template-columns: 1fr; }
 }
+.check-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 8px; font-size: 13px; line-height: 1.5; color: var(--gray-600); }
+.check-row input { margin-top: 3px; accent-color: var(--accent); }
+.plan-portal { grid-column: 1 / -1; }

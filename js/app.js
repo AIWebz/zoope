@@ -409,9 +409,20 @@
     scanning = true;
     $('scanFace').disabled = true;
     $('scanStatus').textContent = 'Loading the scanning models…';
+    var liveFace = null;
     Promise.all([ZoopeFaceMesh.load(), ZoopeFaceMesh.loadSegmenter()]).then(function () {
-      $('scanStatus').textContent = 'Get into position. Capturing after the countdown.';
-      return countdown(st.countdown);
+      // liveness: a real camera, and a living face (it blinks and moves), not a photo or a video of someone
+      var dev = ZoopeLiveness.deviceCheck(stream);
+      if (dev) throw { live: dev };
+      if (st.key !== 'front') {
+        $('scanStatus').textContent = 'Get into position. Capturing after the countdown.';
+        return countdown(st.countdown);
+      }
+      $('scanStatus').textContent = 'Look at the camera and blink a couple of times. Capturing after the countdown.';
+      return Promise.all([countdown(st.countdown + 1), ZoopeLiveness.watchFace(cam, (st.countdown + 1) * 1000)]).then(function (r) {
+        if (!r[1].ok) throw { live: r[1].reason };
+        liveFace = r[1];
+      });
     }).then(function () {
       line.classList.add('on');
       $('scanStatus').textContent = 'Scanning…';
@@ -428,13 +439,15 @@
       }
       // a new front scan needs a new open-mouth photo in the same light (step 2)
       state.face = res.face;
+      state.face.live = { blinks: liveFace.blinks, motion: Math.round(liveFace.motion * 1e4) / 1e4, at: Date.now() };
       save();
       scanStep = stepDone(1) ? 0 : 1;
       refreshAvatarBox();
       $('scanStatus').textContent = stepDone(1) ? 'Captured. Your live avatar is ready. It moves, blinks and speaks with your face.'
         : 'Front captured. Now step 2: open your mouth wide (“ah”) and press Capture mouth open.';
       toast('Face captured');
-    }).catch(function () {
+    }).catch(function (err) {
+      if (err && err.live) { beep(220, 300); $('scanStatus').textContent = err.live; toast('Live face check failed', 'error'); return; }
       if (st.key === 'mouth') { $('scanStatus').textContent = 'The scanning models couldn\'t load. Check your connection and try again.'; return; }
       // the scanning models couldn't load: fall back to an illustrated avatar, and say so
       state.face = ZoopeAvatar.scanFace(cam);
@@ -572,18 +585,31 @@
   $('recordVoice').addEventListener('click', function () {
     if (!stream) return;
     var btn = $('recordVoice'), label = btn.querySelector('span');
+    // liveness: a real microphone, and the lips (seen by the camera) must move with the voice, so a
+    // recording or an AI voice played to the microphone isn't taken as yours
+    var dev = ZoopeLiveness.deviceCheck(stream);
+    if (dev) { $('scanVoiceStatus').textContent = dev; toast('Live voice check failed', 'error'); return; }
     btn.disabled = true;
-    $('scanVoiceStatus').textContent = 'Recording. Read the passage aloud.';
+    $('scanVoiceStatus').textContent = 'Recording. Read the passage aloud, facing the camera.';
+    var watch = ZoopeLiveness.watchTalking(cam);
     recordRaw(stream, SAMPLE_SECONDS, function (frac, level) {
       label.textContent = 'Recording… ' + Math.max(0, Math.ceil(SAMPLE_SECONDS * (1 - frac))) + 's';
       $('sampleMeter').style.width = (level * 100) + '%';
+      watch.level(level);
     }).then(function (data) {
       $('sampleMeter').style.width = '0%';
+      var lips = watch.stop(), room = ZoopeLiveness.audioCheck(data, SAMPLE_RATE);
+      if (!lips.ok || !room.ok) {
+        $('scanVoiceStatus').textContent = (lips.ok ? room : lips).reason;
+        toast('Live voice check failed', 'error');
+        return;
+      }
       $('scanVoiceStatus').textContent = 'Analysing your voice…';
       var profile = ZoopeVoice.analyzeSamples(data, SAMPLE_RATE);
       if (!profile.ok) { $('scanVoiceStatus').textContent = profile.reason; toast('Voice scan failed. Try again.', 'error'); return; }
       voiceSample = { rate: SAMPLE_RATE, data: data };
       state.voice = profile;
+      state.voice.live = { lipSync: Math.round(lips.corr * 100) / 100, at: Date.now() };
       state.neuralReady = false;
       state.liteVoice = null;
       neuralState = 'none';
@@ -594,7 +620,7 @@
       renderVoice(IS_PHONE ? PHONE_VOICE_MSG : 'Next, make your voice from this recording.');
       neural().then(function (m) { m.forget(); }).catch(function () {});
       toast('Voice scanned');
-    }).catch(function (err) { toast(err.message, 'error'); })
+    }).catch(function (err) { watch.stop(); toast(err.message, 'error'); })
       .then(function () { btn.disabled = !stream; label.textContent = voiceSample ? 'Scan again (15s)' : 'Scan my voice (15s)'; });
   });
 
@@ -1014,7 +1040,12 @@
           else if (ev.state === 'lobby') sys('Waiting for the host to let zoope in.');
           else if (ev.state === 'joined') {
             sys('In the call. zoope is following the live captions.');
-            if (!r.greeted) { r.greeted = true; respondWithAI(r, { task: 'join' }); }
+            if (!r.greeted) {
+              r.greeted = true;
+              // disclosure (Setup, on by default): people are told an AI assistant is attending
+              if (state.profile.announce !== false) sess.chat((state.profile.fullName || r.engine.preferred) + '\'s AI assistant (zoope) is attending this call for them and may answer from their notes.');
+              respondWithAI(r, { task: 'join' });
+            }
           } else if (ev.state === 'left') {
             sys(ev.detail || 'The meeting is over.');
             leaveRoom(true);
@@ -1061,7 +1092,7 @@
     document.querySelector('.ext-steps').classList.add('hidden');
   });
   // which version of zoope this is, so an outdated copy of the site is easy to spot
-  var BUILD = '2026-10-05 · AI v15';
+  var BUILD = '2026-10-05 · AI v16';
   $('buildTag').textContent = BUILD;
   ZoopeBrain.onStatus(function (st) {
     if (st.state === 'ready' && room) ZoopeBrain.warm(aiPersona(room));
@@ -1082,6 +1113,8 @@
     });
   });
   // personality and style: used by the AI engine for every reply
+  $('announceAi').checked = state.profile.announce !== false;
+  $('announceAi').addEventListener('change', function () { state.profile.announce = $('announceAi').checked; save(); $('styleSaved').textContent = 'Saved.'; });
   $('styleSelect').value = state.profile.style || 'friendly';
   $('styleInstructions').value = state.profile.instructions || '';
   $('styleSelect').addEventListener('change', function () { state.profile.style = $('styleSelect').value; save(); $('styleSaved').textContent = 'Saved.'; });
@@ -1662,7 +1695,7 @@
     if (n === 1) return !!(p.fullName && p.preferred && p.names && p.names.length);
     if (n === 2) return scanCount() === SCAN_STEPS.length && !!voiceSample && (!!state.neuralReady || liteReady());
     if (n === 3) return Object.keys(state.platforms).length > 0;
-    if (n === 4) return !!state.plan;
+    if (n === 4) return planActive();
     return !!p.styleSet;
   }
   function onbFirstMissing() { for (var n = 1; n <= 5; n++) if (!onbDone(n)) return n; return 0; }
@@ -1714,7 +1747,7 @@
   }
   $('onbStyle').addEventListener('change', function () { saveStyle(false); });
   $('onbInstr').addEventListener('input', function () { saveStyle(false); });
-  var ONB_HINT = { 2: 'Finish the scan first: your face, your mouth open, and your voice.', 3: 'Link at least one meeting app.', 4: 'Pick a plan to continue.' };
+  var ONB_HINT = { 2: 'Finish the scan first: your face, your mouth open, and your voice.', 3: 'Link at least one meeting app.', 4: 'Pick a plan to continue (a paid plan needs its Stripe payment first).' };
   $('onbNext').addEventListener('click', function () {
     $('onbHint').textContent = '';
     if (onbStep === 1 && !saveNames()) return;
@@ -1735,27 +1768,56 @@
       onbStep = +li.dataset.n; $('onbHint').textContent = ''; renderOnboarding();
     });
   });
-  // plans (a demo: nothing is charged and no payment details are asked for)
+  // Plans. With the site owner's Stripe Payment Links (js/config.js), a paid plan opens Stripe's checkout
+  // and is active once Stripe sends the user back; without links, plans are a demo and nothing is charged.
+  var STRIPE = (window.ZOOPE_CONFIG && window.ZOOPE_CONFIG.stripe) || { links: {} };
+  function payLink(id) { return (STRIPE.links || {})[id] || ''; }
+  function planActive() { return !!(state.plan && (state.plan.paid || !payLink(state.plan.id) || state.plan.id === 'free')); }
+  if (!state.userId) { state.userId = 'u_' + Math.random().toString(36).slice(2, 12) + Date.now().toString(36); save(); }
+  // back from Stripe's checkout: ?paid=pro&session_id=cs_…
+  (function () {
+    var q = new URLSearchParams(location.search), paid = q.get('paid');
+    if (!paid) return;
+    var pl = PLANS.filter(function (x) { return x.id === paid; })[0];
+    if (pl) {
+      state.plan = { id: pl.id, name: pl.name, price: pl.price, chosenAt: Date.now(), paid: true, session: q.get('session_id') || '', via: 'stripe' };
+      save();
+      setTimeout(function () { toast('Payment received. Your ' + pl.name + ' plan is active.'); }, 600);
+    }
+    history.replaceState(null, '', location.pathname + (location.hash || '#/start'));
+  })();
   function renderPlans() {
+    var live = !!(payLink('pro') || payLink('team'));
+    document.querySelectorAll('.plan-note').forEach(function (el) {
+      el.textContent = live ? 'Payments are handled by Stripe on its own secure checkout page; zoope never sees your card. Pick a plan to continue; you can change it later in Setup.'
+        : 'Demo: plans aren\'t billed yet, and no payment details are asked for. Pick one to continue; you can change it later in Setup.';
+    });
     document.querySelectorAll('[data-plans]').forEach(function (box) {
       box.innerHTML = PLANS.map(function (pl) {
-        var on = !!(state.plan && state.plan.id === pl.id);
+        var on = !!(state.plan && state.plan.id === pl.id), pending = on && !planActive(), link = payLink(pl.id);
+        var label = on && !pending ? 'Selected' : pending ? 'Finish payment' : link ? 'Choose ' + pl.name + ' · pay with Stripe' : 'Choose ' + pl.name;
         return '<div class="plan' + (on ? ' selected' : '') + (pl.best ? ' best' : '') + '">' +
           (pl.best ? '<span class="plan-tag">Most popular</span>' : '') +
-          '<b class="plan-name">' + esc(pl.name) + '</b><div class="plan-price">' + esc(pl.price) + ' <span>' + esc(pl.per) + '</span></div>' +
+          '<b class="plan-name">' + esc(pl.name) + (on && state.plan.paid ? ' <span class="pill pill-green">Paid</span>' : pending ? ' <span class="pill">Awaiting payment</span>' : '') + '</b>' +
+          '<div class="plan-price">' + esc(pl.price) + ' <span>' + esc(pl.per) + '</span></div>' +
           '<ul>' + pl.items.map(function (i) { return '<li>' + esc(i) + '</li>'; }).join('') + '</ul>' +
-          '<button type="button" class="btn ' + (on ? 'btn-secondary' : 'btn-primary') + '" data-plan="' + pl.id + '"' + (on ? ' disabled' : '') + '>' + (on ? 'Selected' : 'Choose ' + esc(pl.name)) + '</button></div>';
-      }).join('');
+          '<button type="button" class="btn ' + (on && !pending ? 'btn-secondary' : 'btn-primary') + '" data-plan="' + pl.id + '"' + (on && !pending ? ' disabled' : '') + '>' + esc(label) + '</button></div>';
+      }).join('') + (STRIPE.portal && state.plan && state.plan.paid ? '<p class="hint plan-portal"><a href="' + esc(STRIPE.portal) + '" target="_blank" rel="noopener">Manage or cancel your subscription on Stripe</a></p>' : '');
     });
   }
   document.addEventListener('click', function (e) {
     var b = e.target.closest && e.target.closest('[data-plan]');
     if (!b) return;
-    var pl = PLANS.filter(function (x) { return x.id === b.dataset.plan; })[0];
-    state.plan = { id: pl.id, name: pl.name, price: pl.price, chosenAt: Date.now(), demo: true };
+    var pl = PLANS.filter(function (x) { return x.id === b.dataset.plan; })[0], link = payLink(pl.id);
+    state.plan = { id: pl.id, name: pl.name, price: pl.price, chosenAt: Date.now(), paid: false, demo: !link };
     save(); renderOnboarding();
     $('onbHint').textContent = '';
-    toast(pl.name + ' plan selected (demo: no charge)');
+    if (!link) { toast(pl.name + ' plan selected' + (pl.id === 'free' ? '' : ' (demo: no charge)')); return; }
+    // Stripe's hosted checkout; it sends the user back here with ?paid=…
+    var url = link + (link.indexOf('?') < 0 ? '?' : '&') + 'client_reference_id=' + encodeURIComponent(state.userId) +
+      (state.platforms && Object.keys(state.platforms).length ? '&prefilled_email=' + encodeURIComponent(state.platforms[Object.keys(state.platforms)[0]]) : '');
+    toast('Opening Stripe checkout…');
+    location.href = url;
   });
 
   /* ------------------------------- routing ------------------------------- */

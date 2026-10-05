@@ -19,6 +19,12 @@ Open `index.html` through any static server, for example `python3 -m http.server
 
 ## How it works
 
+**Liveness (real face, real voice):** the face scan only accepts a living face: you blink during the countdown (a printed or on-screen photo can't) and your head shows natural micro-motion; known virtual cameras (OBS, ManyCam, …) are refused. The voice scan only accepts your own voice: the camera watches your lips while you read, and they must move with the sound, so a recording or an AI voice played to the microphone fails; virtual microphones (VB-Cable, BlackHole, Voicemod, …) and recordings with the digital silence of injected audio are refused (`js/liveness.js`). These are on-device checks that stop casual misuse (cloning someone from their photos or videos), not a guarantee against a determined attacker.
+
+**Payments (Stripe):** plans use Stripe Payment Links, so no server is needed and zoope never handles card details. Put your links in `js/config.js` (the steps are in that file): a paid plan then opens Stripe's checkout, and the plan becomes active when Stripe redirects back with `?paid=…&session_id=…`. With a customer-portal link, paid users can manage or cancel from Setup. Without links, plans stay a demo. Without a server, the redirect is trusted; to enforce payment, verify the session (or a webhook) on a server.
+
+**AI disclosure:** by default, when zoope joins a call it posts in the meeting chat that your AI assistant is attending for you (Setup → Personality & style; can be turned off where it isn't required).
+
 **Get started (required):** before anything else, every user completes five steps on the Get started page: 1. names and nicknames, 2. the voice and face scan (face, mouth open, voice), 3. linking Zoom, Microsoft Teams and/or Google Meet (changeable any time in Setup), 4. a plan (a demo: nothing is billed and no payment details are asked for), 5. personality and style. Until then the app opens on that page; the face & voice scanner is reachable from step 2.
 
 The face, segmentation, avatar rendering and voice runtimes are bundled in `vendor/`. The only thing fetched from outside is the voice model's weights, once, when you make your voice.
